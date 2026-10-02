@@ -1,10 +1,11 @@
-import type { CSSProperties } from 'react';
+import { memo, type CSSProperties } from 'react';
 import { Bot, Pause, Crown, WifiOff, Spade } from 'lucide-react';
 import { GAME_LABELS, chips, handGameLabel, isLegacyIndianHand, type RoomView } from '../shared/model';
 import { ChipStack, CommunityBoards, PlayerName, PlayingCard } from './ui';
+import { useCountdown } from './clock';
 
-export function PokerTable({ room, now, onChooseEmoji, emojiDisabled = false }: {
-  room: RoomView; now: number; onChooseEmoji?: () => void; emojiDisabled?: boolean;
+export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseEmoji, emojiDisabled = false }: {
+  room: RoomView; timeOffset: number; onChooseEmoji?: () => void; emojiDisabled?: boolean;
 }) {
   const hand = room.hand;
   const hero = room.players.find(player => player.id === room.youId)!;
@@ -14,18 +15,34 @@ export function PokerTable({ room, now, onChooseEmoji, emojiDisabled = false }: 
   const legacyIndian = !!hand && isLegacyIndianHand(hand);
   const hiddenOwn = indian && active && !!hero.hand && !hero.hand.folded;
   const vote = active ? hand.runoutVote : null;
+  const doubleBoard = hand?.boards.length === 2;
+  const compactPairs = Math.floor((room.settings.maxSeats - 1) / 2);
+  const upperRows = Math.max(1, Math.ceil(compactPairs / 2));
+  const lowerRows = Math.floor(compactPairs / 2);
+  // Narrow tables reserve a clear middle band for boards, with opponent rows above and below.
+  const compactCommunity = upperRows * 130 + (doubleBoard ? 100 : 65);
+  const lowerStart = compactCommunity + (doubleBoard ? 160 : 120);
+  const compactHero = lowerRows ? lowerStart + (lowerRows - 1) * 130 + 140
+    : compactCommunity + (doubleBoard ? 160 : 140);
   const seats = Array.from({ length: room.settings.maxSeats }, (_, seat) => {
     const relative = (seat - (hero.seat ?? 0) + room.settings.maxSeats) % room.settings.maxSeats;
     const angle = Math.PI / 2 + relative * Math.PI * 2 / room.settings.maxSeats;
-    return { seat, x: 50 + Math.cos(angle) * 42, y: 48 + Math.sin(angle) * 39 };
+    const centered = relative === 0 || relative === room.settings.maxSeats / 2;
+    const row = compactPairs - Math.min(relative, room.settings.maxSeats - relative);
+    const compactY = relative === 0 ? compactHero : centered ? 60
+      : row < upperRows ? 60 + row * 130 : lowerStart + (row - upperRows) * 130;
+    return {
+      seat, x: 50 + Math.cos(angle) * 42, y: 48 + Math.sin(angle) * 39,
+      compactX: centered ? 50 : relative < room.settings.maxSeats / 2 ? 0 : 100, compactY,
+    };
   });
   const winners = new Set(hand?.results.flatMap(result => result.winners));
-  const remaining = hand?.deadline ? Math.max(0, Math.ceil((hand.deadline - now) / 1000)) : 0;
   const winnerNames = room.players.filter(player => winners.has(player.id)).map(player => player.name).join(' & ');
   const streetName = hand?.street === 'complete' ? 'HAND COMPLETE' : vote ? 'RUNOUT DECISION'
     : legacyIndian ? 'LEGACY ONE-CARD BETTING' : hand?.street?.toUpperCase() ?? 'THE NIGHT IS YOUNG';
 
-  return <div role="region" className={`table-stage ${hand?.boards.length === 2 ? 'table-double-board' : ''} ${indian ? 'table-indian' : ''} ${room.paused ? 'table-is-paused' : ''}`} aria-label="Poker table">
+  return <div role="region" className={`table-stage ${room.settings.maxSeats >= 8 ? 'table-crowded' : ''} ${doubleBoard ? 'table-double-board' : ''} ${indian ? 'table-indian' : ''} ${room.paused ? 'table-is-paused' : ''}`}
+    style={{ '--compact-table-height': `${compactHero + 95}px`, '--compact-community-y': `${compactCommunity}px` } as CSSProperties} aria-label="Poker table">
     <div className="table-shadow" /><div className="table-rail"><div className="table-felt"><span className="felt-wordmark">RIVER ROOM <Spade size={14} fill="currentColor" /></span>
       <span className="felt-subtitle">{(hand ? handGameLabel(hand) : GAME_LABELS[game]).toUpperCase()}</span></div></div>
     <div className="community">
@@ -41,7 +58,7 @@ export function PokerTable({ room, now, onChooseEmoji, emojiDisabled = false }: 
       </> : <div className="waiting-table"><Spade size={35} strokeWidth={1} /><h2>Pull up a chair.</h2><p>Invite your people or add practice bots.<br />The host deals when everyone is ready.</p></div>}
       {room.paused && <span className="paused-overlay"><Pause size={14} /> TABLE PAUSED</span>}
     </div>
-    {seats.map(({ seat, x, y }) => {
+    {seats.map(({ seat, x, y, compactX, compactY }) => {
       const player = room.players.find(item => item.seat === seat);
       const turn = !!player && active && hand.actorId === player.id && !vote;
       const isYou = player?.id === room.youId;
@@ -49,7 +66,8 @@ export function PokerTable({ room, now, onChooseEmoji, emojiDisabled = false }: 
       const runoutEligible = !!player && !!vote?.eligible.includes(player.id);
       const runoutChoice = player ? vote?.votes[player.id] : undefined;
       return <div key={seat} className={`seat ${isYou ? 'hero-seat' : ''} ${player?.cards.length === 4 ? 'four-card-seat' : ''} ${turn ? 'seat-active' : ''} ${folded ? 'seat-folded' : ''} ${player && winners.has(player.id) ? 'seat-winner' : ''}`}
-        style={{ '--seat-x': `${x}%`, top: `${y}%`, '--seat-color': ['#7973aa', '#368b7c', '#aa785b', '#64799c', '#987947', '#8a6795', '#678c9c', '#839360', '#a2697d'][seat] } as CSSProperties}>
+        style={{ '--seat-x': `${x}%`, '--seat-y': `${y}%`, '--compact-seat-x': `${compactX}%`, '--compact-seat-y': `${compactY}px`,
+          '--seat-color': ['#7973aa', '#368b7c', '#aa785b', '#64799c', '#987947', '#8a6795', '#678c9c', '#839360', '#a2697d'][seat] } as CSSProperties}>
         {player ? <>
           <div className="seat-cards" role="group" aria-label={isYou && hiddenOwn ? 'Your Indian poker cards, intentionally hidden from you' : `${player.name}'s cards`}>
             {player.cards.map((card, index) => <PlayingCard key={index} card={(isYou && hiddenOwn) || (vote && !isYou && !indian) ? null : card} small={!isYou} />)}</div>
@@ -65,14 +83,23 @@ export function PokerTable({ room, now, onChooseEmoji, emojiDisabled = false }: 
               title="Change your table emoji" disabled={emojiDisabled} onClick={onChooseEmoji}><PlayerName player={player} /><small>YOU</small></button>
             : <span className="seat-name"><PlayerName player={player} />{isYou && <small>YOU</small>}</span>}
             <strong className="seat-stack">{chips(player.stack)}</strong>
-            <span className={`seat-action ${turn ? 'acting-label' : ''}`}>{room.status === 'closed' ? 'Cashed out' : turn ? room.paused ? 'Turn paused' : `${remaining}s to act`
+            {turn ? <TurnClock deadline={hand.deadline} timeOffset={timeOffset} paused={room.paused} turnSeconds={room.settings.turnSeconds} />
+              : <span className="seat-action">{room.status === 'closed' ? 'Cashed out'
               : runoutEligible ? runoutChoice ? `Runout: ${runoutChoice === 1 ? 'once' : `up to ${runoutChoice}`}` : 'Runout: pending'
                 : folded ? 'Folded' : player.stack === 0 && player.hand && active ? 'ALL IN' : player.sittingOut ? 'Sitting out' : player.hand?.lastAction || (player.stack === 0 ? 'Awaiting buy-in' : player.bot ? 'Practice bot' : 'Ready')}</span>
-            {turn && <span className="turn-progress" style={{ width: `${Math.min(100, remaining / room.settings.turnSeconds * 100)}%` }} />}
+            }
           </div>
           {!!player.hand?.streetBet && hand?.street !== 'complete' && <div className="seat-bet"><span className="mini-chip" />{chips(player.hand.streetBet)}</div>}
         </> : <div className="empty-seat"><span>+</span><small>OPEN SEAT</small></div>}
       </div>;
     })}
   </div>;
+});
+
+function TurnClock({ deadline, timeOffset, paused, turnSeconds }: {
+  deadline: number | null; timeOffset: number; paused: boolean; turnSeconds: number;
+}) {
+  const remaining = useCountdown(paused ? null : deadline, timeOffset) ?? 0;
+  return <><span className="seat-action acting-label">{paused ? 'Turn paused' : `${remaining}s to act`}</span>
+    <span className="turn-progress" style={{ width: `${Math.min(100, remaining / turnSeconds * 100)}%` }} /></>;
 }

@@ -113,6 +113,149 @@ async function openFixture(page: Page, origin: string, seed: (base: RoomView) =>
   return state;
 }
 
+for (const game of ['holdem', 'omaha_bomb'] as const) {
+  for (const seats of [2, 3, 4, 5, 6, 7, 8, 9]) {
+    test(`player displays are 20% larger without overlaps: ${game}, ${seats} seats`, async ({ page, baseURL }, testInfo) => {
+      const state = await openFixture(page, baseURL!, base => {
+        const room = handView(base, game);
+        room.settings.maxSeats = seats;
+        const hero = room.players[0]!;
+        const opponent = room.players[1]!;
+        room.players = Array.from({ length: seats }, (_, seat) => {
+          const player = structuredClone(seat === 0 ? hero : opponent);
+          player.id = seat === 0 ? hero.id : `fixture-seat-${seat}`;
+          player.name = seat === 0 ? 'Player with a long name' : `Player ${seat + 1}`;
+          player.emoji = '\u{1F47B}';
+          player.seat = seat;
+          player.hand = { ...player.hand!, id: player.id, seat };
+          return player;
+        });
+        room.hand!.players = room.players.map(player => player.hand!);
+        room.hand!.street = 'flop';
+        if (game === 'holdem') room.hand!.boards = [['2h', '3c', '4s']];
+        room.hand!.board = room.hand!.boards[0]!;
+        return room;
+      });
+      const table = page.getByRole('region', { name: 'Poker table' });
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      const failures: string[] = [];
+      for (const width of [1600, 1440, 1200, 1024, 980, 768, 600, 390, 320]) {
+        await page.setViewportSize({ width, height: width > 600 ? 1000 : 844 });
+        const sizes = await table.locator('.seat-panel, .seat-name, .player-emoji, .seat-stack, .seat-avatar, .position-badge')
+          .evaluateAll(elements => elements.map(element => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            const transform = new DOMMatrix(getComputedStyle(element.closest('.seat')!).transform);
+            return { width: rect.width, height: rect.height, originalWidth: parseFloat(style.width), originalHeight: parseFloat(style.height), scaleX: transform.a, scaleY: transform.d };
+          }));
+        for (const size of sizes) {
+          expect(size.scaleX).toBe(1.2);
+          expect(size.scaleY).toBe(1.2);
+          expect(size.width).toBeCloseTo(size.originalWidth * 1.2, 1);
+          expect(size.height).toBeCloseTo(size.originalHeight * 1.2, 1);
+        }
+        const layout = await page.evaluate(() => {
+          const rectangle = (element: Element) => {
+            const { left, top, right, bottom } = element.getBoundingClientRect();
+            return { left, top, right, bottom };
+          };
+          return {
+            viewport: innerWidth, scroll: document.documentElement.scrollWidth,
+            panels: [...document.querySelectorAll('.seat-panel')].map(rectangle),
+            cards: [...document.querySelectorAll('.seat')].map(seat => [...seat.querySelectorAll('.seat-cards .playing-card')].map(rectangle)),
+            bets: [...document.querySelectorAll('.seat-bet')].map(rectangle),
+            boards: [...document.querySelectorAll('.community .board-cards')].map(rectangle),
+            metadata: rectangle(document.querySelector('.table-meta')!),
+            actions: rectangle(document.querySelector('.action-console')!),
+          };
+        });
+        const overlaps = (a: typeof layout.metadata, b: typeof layout.metadata) =>
+          Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 &&
+          Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
+        if (layout.scroll > layout.viewport + 1) failures.push(`Horizontal overflow at ${width}px`);
+        for (const [index, panel] of layout.panels.entries()) {
+          if (panel.left < 0 || panel.right > width + 1) failures.push(`Seat ${index} outside viewport at ${width}px`);
+          if (panel.bottom >= layout.actions.top) failures.push(`Seat ${index} touches controls at ${width}px`);
+          for (const [otherIndex, other] of layout.panels.slice(index + 1).entries())
+            if (overlaps(panel, other)) failures.push(`Seats ${index}/${index + otherIndex + 1} overlap at ${width}px`);
+          for (const board of layout.boards)
+            if (overlaps(panel, board)) failures.push(`Seat ${index} overlaps board at ${width}px`);
+          for (const [otherIndex, cards] of layout.cards.entries()) {
+            if (otherIndex !== index && cards.some(card => overlaps(panel, card)))
+              failures.push(`Seat ${index} overlaps seat ${otherIndex}'s cards at ${width}px`);
+          }
+        }
+        const cards = layout.cards.flat();
+        if (cards.some(card => card.top <= layout.metadata.bottom)) failures.push(`Hole cards overlap metadata at ${width}px`);
+        if (cards.some(card => layout.boards.some(board => overlaps(card, board)))) failures.push(`Hole cards overlap board at ${width}px`);
+        if (layout.bets.some(bet => bet.bottom >= layout.actions.top)) failures.push(`Bets overlap controls at ${width}px`);
+        if (width === 1440 || width === 390)
+          await table.screenshot({ path: testInfo.outputPath(`player-displays-${width}.png`), animations: 'disabled' });
+      }
+      expect(failures).toEqual([]);
+      expect(state.errors).toEqual([]);
+    });
+  }
+}
+
+test('localized turn, auto-deal and runout clocks keep ticking across dialogs and pause changes', async ({ page, baseURL }) => {
+  await page.clock.install();
+  const state = await openFixture(page, baseURL!);
+  const clock = page.locator('.hero-seat .seat-action');
+  await expect(clock).toHaveText(/\d+s to act/);
+  const initial = parseInt((await clock.textContent())!);
+  await page.getByRole('button', { name: 'Choose table emoji', exact: true }).click();
+  await page.clock.runFor(1250);
+  expect(parseInt((await clock.textContent())!)).toBeLessThan(initial);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Pause table', exact: true }).click();
+  await expect(clock).toHaveText('Turn paused');
+  await page.clock.runFor(1000);
+  await expect(clock).toHaveText('Turn paused');
+  await page.getByRole('button', { name: 'Resume table', exact: true }).click();
+  await expect(clock).toHaveText(/\d+s to act/);
+  const resumed = parseInt((await clock.textContent())!);
+  await page.clock.runFor(1250);
+  expect(parseInt((await clock.textContent())!)).toBeLessThan(resumed);
+
+  const refresh = async () => {
+    state.room.version++;
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  };
+  state.room.hand!.street = 'complete';
+  state.room.hand!.actorId = null;
+  state.room.hand!.deadline = null;
+  state.room.nextHandAt = Date.now() + 6000;
+  await refresh();
+  await expect(page.locator('.action-heading')).toContainText(/Next hand in \d+s/);
+  const nextHand = await page.locator('.action-heading').textContent();
+  await page.clock.runFor(1250);
+  await expect(page.locator('.action-heading')).not.toHaveText(nextHand!);
+
+  state.room.nextHandAt = null;
+  state.room.hand!.street = 'preflop';
+  state.room.hand!.rules.maxRunouts = 2;
+  state.room.hand!.runoutVote = {
+    eligible: state.room.players.map(player => player.id), votes: {},
+    maxRuns: 2, deadline: Date.now() + 6000,
+  };
+  await refresh();
+  await expect(page.getByRole('timer')).toHaveText(/\d+s to choose/);
+  const runout = await page.getByRole('timer').textContent();
+  await page.clock.runFor(1250);
+  await expect(page.getByRole('timer')).not.toHaveText(runout!);
+  await page.getByRole('button', { name: 'Pause table', exact: true }).click();
+  await expect(page.getByRole('timer')).toHaveText('Paused');
+  await page.getByRole('button', { name: 'Resume table', exact: true }).click();
+  await expect(page.getByRole('timer')).toHaveText(/\d+s to choose/);
+  state.room.hand!.runoutVote!.deadline = Date.now() + 1500;
+  await refresh();
+  await page.clock.runFor(2500);
+  await expect(page.getByRole('timer')).toHaveText('Resolving choices…');
+  await expect(page.getByRole('button', { name: 'Run once', exact: true })).toBeDisabled();
+  expect(state.errors).toEqual([]);
+});
+
 test('new-table minimum is 500 from the shared default', async ({ page }) => {
   expect(DEFAULT_SETTINGS.minBuyIn).toBe(500);
   await page.goto('/');

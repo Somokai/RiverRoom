@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
 import { X, Spade } from 'lucide-react';
 import { boardRuns, chips, money, type BountyAward, type Card, type Hand, type HandRules, type Player, type RoomView } from '../shared/model';
 import { findPlayerEmoji } from '../shared/emoji';
@@ -8,7 +8,7 @@ export function Modal({ title, subtitle, close, children, wide = false }: PropsW
 }>) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-  useEffect(() => {
+  useLayoutEffect(() => {
     const dialog = ref.current!;
     const previousFocus = document.activeElement;
     dialog.showModal();

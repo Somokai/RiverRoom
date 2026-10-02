@@ -248,6 +248,95 @@ test('per-table emojis update live, survive reconnects, and can be searched, cha
   } finally { await guestContext.close(); }
 });
 
+test('emoji interactions avoid recurring formatting work and delayed hover feedback', async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    const counters = { numberFormats: 0, formatCalls: 0 };
+    Object.defineProperty(window, 'uiCounters', { value: counters });
+    const originalFormat = Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, 'format')?.get;
+    if (!originalFormat) throw new Error('Missing number formatter accessor.');
+    Object.defineProperty(Intl.NumberFormat.prototype, 'format', {
+      configurable: true,
+      get() {
+        const format: (value: number | bigint) => string = originalFormat.call(this);
+        return (value: number | bigint) => { counters.formatCalls++; return format(value); };
+      },
+    });
+    Intl.NumberFormat = new Proxy(Intl.NumberFormat, {
+      construct(target, args) { counters.numberFormats++; return Reflect.construct(target, args); },
+    });
+  });
+  let room = await createTable(page, 'Responsive table', 9);
+  for (let seat = 1; seat < 9; seat++) room = await serverCommand(page, room.id, { type: 'add_bot' });
+  await expect(page.locator('.player-row')).toHaveCount(9);
+  const session = await page.context().newCDPSession(page);
+  await session.send('Performance.enable');
+  const metrics = async () => {
+    const result = await session.send('Performance.getMetrics');
+    const read = (name: string) => {
+      const value = result.metrics.find(metric => metric.name === name)?.value;
+      if (value === undefined) throw new Error(`Missing browser performance metric: ${name}`);
+      return value;
+    };
+    return { script: read('ScriptDuration'), task: read('TaskDuration') };
+  };
+  const before = await metrics();
+  const idleWork = await page.evaluate(async () => {
+    const counters = (window as typeof window & { uiCounters: { numberFormats: number; formatCalls: number } }).uiCounters;
+    const start = { ...counters };
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    return { constructors: counters.numberFormats - start.numberFormats, formats: counters.formatCalls - start.formatCalls };
+  });
+  const after = await metrics();
+  const openTimes: number[] = [];
+  const trigger = page.getByRole('button', { name: 'Choose table emoji', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Choose your table emoji', exact: true });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    openTimes.push(await trigger.evaluate(async element => {
+      if (!(element instanceof HTMLButtonElement)) throw new Error('Expected the emoji picker button.');
+      element.focus();
+      const started = performance.now();
+      const painted = new Promise<number>(resolve => {
+        const observer = new MutationObserver(() => {
+          if (document.querySelector('dialog[open]')) {
+            observer.disconnect();
+            requestAnimationFrame(() => setTimeout(() => resolve(performance.now() - started), 0));
+          }
+        });
+        observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] });
+      });
+      element.click();
+      return painted;
+    }));
+    await expect(dialog).toBeVisible();
+    if (attempt < 4) await page.keyboard.press('Escape');
+  }
+  const styles = await dialog.evaluate(element => ({
+    backdropFilter: getComputedStyle(element, '::backdrop').backdropFilter,
+    hoverDuration: getComputedStyle(element.querySelector('.emoji-choice')!).transitionDuration,
+  }));
+  const pickerWork = await page.evaluate(async () => {
+    const counters = (window as typeof window & { uiCounters: { numberFormats: number; formatCalls: number } }).uiCounters;
+    const start = { ...counters };
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    return { constructors: counters.numberFormats - start.numberFormats, formats: counters.formatCalls - start.formatCalls };
+  });
+  const report = {
+    idleWork, pickerWork, openTimes, ...styles,
+    idleScriptMs: (after.script - before.script) * 1000,
+    idleTaskMs: (after.task - before.task) * 1000,
+  };
+  console.log('UI responsiveness:', JSON.stringify(report));
+  await testInfo.attach('ui-responsiveness', { body: JSON.stringify(report, null, 2), contentType: 'application/json' });
+  expect(idleWork).toEqual({ constructors: 0, formats: 0 });
+  expect(pickerWork).toEqual({ constructors: 0, formats: 0 });
+  expect(styles.hoverDuration.split(',').every(duration => parseFloat(duration) === 0)).toBe(true);
+  expect(styles.backdropFilter).toBe('none');
+  await dialog.getByRole('button', { name: 'Choose Sunglasses', exact: true }).hover();
+  await expect(dialog.getByRole('button', { name: 'Choose Sunglasses', exact: true })).toHaveCSS('border-color', 'rgb(228, 193, 125)');
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+});
+
 test('desktop and phone layouts expose real controls without horizontal overflow', async ({ page, browser }) => {
   const folder = resolve('preview');
   await mkdir(folder, { recursive: true });

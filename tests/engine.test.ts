@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { DEFAULT_SETTINGS, presetRaise, type Command, type Room, type RoomSettings } from '../src/shared/model';
+import { DEFAULT_SETTINGS, chips, money, presetRaise, type Command, type Room, type RoomSettings } from '../src/shared/model';
 import { makeDeck, evaluate, shuffleDeck } from '../src/server/cards';
 import { assertRoom, createRoom, legalActions, roomView, timeoutTurn, transition } from '../src/server/engine';
 import { verifyTransfers } from '../src/server/store';
@@ -82,6 +82,16 @@ describe('card evaluation and fair deck construction', () => {
     }
     expect(signatures.size).toBe(20);
   });
+});
+
+test('reused display formatters preserve chip and currency output', () => {
+  for (const value of [0, 1, -1, 1234, -123456, 1000000000]) {
+    expect(chips(value)).toBe(new Intl.NumberFormat('en-US').format(value));
+    for (const currency of ['USD', 'EUR', 'GBP', 'CAD'])
+      expect(money(value, currency)).toBe(new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value / 100));
+  }
+  expect(money(1234)).toBe('$12.34');
+  expect(() => money(100, 'invalid')).toThrow(RangeError);
 });
 
 describe('per-table player emojis', () => {

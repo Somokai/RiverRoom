@@ -6,6 +6,7 @@ import { BountyNotice, Brand, Modal, Numeric, PlayerName, bountyLabel, ruleSumma
 import { PokerTable } from './Table';
 import { Records } from './Records';
 import { EmojiPicker } from './EmojiPicker';
+import { useCountdown } from './clock';
 import { GAME_LABELS, chips, handAnte, handGameLabel, isLegacyIndianHand, money, presetRaise, type Command, type GameVariant, type HandRules, type Identity, type RoomView, type RunoutCount } from '../shared/model';
 
 export function Game({ initialRoom, user, onHome, onSessionExpired }: {
@@ -16,7 +17,6 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [clock, setClock] = useState(Date.now());
   const [timeOffset, setTimeOffset] = useState(initialRoom.serverTime - Date.now());
   const [panel, setPanel] = useState<'players' | 'chat'>('players');
   const [modal, setModal] = useState<'fund' | 'bot-fund' | 'settings' | 'invite' | 'cashout' | 'close' | 'transfer' | 'ledger' | 'hands' | 'audit' | 'emoji' | null>(null);
@@ -67,7 +67,6 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
     document.addEventListener('visibilitychange', visibility);
     return () => { socket.disconnect(); clearInterval(interval); document.removeEventListener('visibilitychange', visibility); };
   }, [initialRoom.id, user.csrf, acceptRoom, refresh]);
-  useEffect(() => { const interval = setInterval(() => setClock(Date.now()), 250); return () => clearInterval(interval); }, []);
   useEffect(() => { if (notice) { const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); } }, [notice]);
   useEffect(() => { chatEnd.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [room.events.length, room.events.at(-1)?.id, panel]);
   const hero = room.players.find(player => player.id === user.id)!;
@@ -80,7 +79,6 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const legacyIndian = !!hand && isLegacyIndianHand(hand);
   const legal = room.legal;
   const open = room.status === 'open';
-  const now = clock + timeOffset;
   const pending = room.requests.filter(request => request.status === 'pending');
   const ownRequest = room.requests.find(request => request.playerId === user.id && ['pending', 'approved'].includes(request.status));
   useEffect(() => {
@@ -147,7 +145,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   }
   const addBot = () => void command({ type: 'add_bot' });
   const disable = busy || !connected || !open;
-  const openEmoji = () => { setError(''); setModal('emoji'); };
+  const openEmoji = useCallback(() => { setError(''); setModal('emoji'); }, []);
   function soundToggle() {
     if (!sound) {
       audio.current ??= new AudioContext();
@@ -181,12 +179,12 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
             ? <span>{displayedRules.game === 'omaha_bomb' ? 'Bomb ante' : 'Ante'} <b>{chips(displayedAnte)}</b> / No blinds</span>
             : <span>Blinds <b>{chips(room.settings.smallBlind)} / {chips(room.settings.bigBlind)}</b>{displayedAnte > 0 && <> <span className="middot">/</span> Ante {chips(displayedAnte)}</>}</span>}
           <span>Hand <b>#{room.handNumber.toString().padStart(3, '0')}</b></span></div>
-        <PokerTable room={room} now={now} onChooseEmoji={open ? openEmoji : undefined} emojiDisabled={disable} />
+        <PokerTable room={room} timeOffset={timeOffset} onChooseEmoji={open ? openEmoji : undefined} emojiDisabled={disable} />
         <div className={`action-console ${legal.canAct && !runoutVote ? 'your-turn' : ''}`}>
           <div className="action-heading"><span className={`turn-heading ${legal.canAct && !runoutVote ? 'positive' : ''}`}>{!open ? 'SESSION COMPLETE' : runoutVote ? 'RUNOUT CONSENT' : room.paused ? 'THE TABLE IS PAUSED' : legal.canAct ? 'YOUR MOVE' : activeHand ? `WAITING FOR ${room.players.find(player => player.id === hand.actorId)?.name.toUpperCase() ?? 'THE TABLE'}` : 'BETWEEN HANDS'}</span>
             <span className="muted">{!open ? 'Your final results are in the ledger.' : runoutVote ? room.paused ? 'Decision paused; submitted choices are saved.' : 'Betting is over. Decide before the cards run out.'
-              : activeHand ? legal.canAct ? `${chips(legal.callAmount)} to call` : hero.sittingOut ? 'You will sit out the next hand.' : 'A little patience. A good hand is worth it.' : room.nextHandAt && !room.paused && canDeal ? `Next hand in ${Math.max(0, Math.ceil((room.nextHandAt - now) / 1000))}s` : 'Ready when you are.'}</span></div>
-          {runoutVote && hand ? <RunoutDecision room={room} hand={hand} now={now} disabled={disable} error={error}
+              : activeHand ? legal.canAct ? `${chips(legal.callAmount)} to call` : hero.sittingOut ? 'You will sit out the next hand.' : 'A little patience. A good hand is worth it.' : room.nextHandAt && !room.paused && canDeal ? <NextDealClock deadline={room.nextHandAt} timeOffset={timeOffset} /> : 'Ready when you are.'}</span></div>
+          {runoutVote && hand ? <RunoutDecision room={room} hand={hand} timeOffset={timeOffset} disabled={disable} error={error}
             choose={count => command({ type: 'runouts', handId: hand.id, count })} /> : activeHand ? <>
             {hand.rules.game !== 'holdem' && <p className="variant-guidance">{hand.rules.game === 'indian'
               ? legacyIndian ? 'This saved one-card Indian hand finishes under its original rules. New Indian deals use two cards and normal Hold\u2019em betting.'
@@ -335,16 +333,20 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   </div>;
 }
 
-function RunoutDecision({ room, hand, now, disabled, error, choose }: {
-  room: RoomView; hand: NonNullable<RoomView['hand']>; now: number; disabled: boolean; error: string;
+function NextDealClock({ deadline, timeOffset }: { deadline: number; timeOffset: number }) {
+  return <>Next hand in {useCountdown(deadline, timeOffset) ?? 0}s</>;
+}
+
+function RunoutDecision({ room, hand, timeOffset, disabled, error, choose }: {
+  room: RoomView; hand: NonNullable<RoomView['hand']>; timeOffset: number; disabled: boolean; error: string;
   choose: (count: RunoutCount) => Promise<boolean>;
 }) {
   const vote = hand.runoutVote;
+  const seconds = useCountdown(vote?.deadline ?? null, timeOffset);
   if (!vote) return null;
   const ownVote = vote.votes[room.youId];
   const eligible = vote.eligible.includes(room.youId);
-  const seconds = vote.deadline === null ? null : Math.max(0, Math.ceil((vote.deadline - now) / 1000));
-  const expired = vote.deadline !== null && now >= vote.deadline;
+  const expired = vote.deadline !== null && seconds === 0;
   return <section className="runout-decision" aria-labelledby="runout-heading">
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="runout-title"><h2 id="runout-heading">How many times should we run it?</h2>

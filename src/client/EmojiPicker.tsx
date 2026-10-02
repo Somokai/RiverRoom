@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Search, Smile, X } from 'lucide-react';
 import { EMOJI_GROUPS, findPlayerEmoji } from '../shared/emoji';
 import { Modal, PlayerEmoji } from './ui';
@@ -10,7 +10,7 @@ export function EmojiPicker({ value, disabled, error, choose, close }: {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
   const searchInput = useRef<HTMLInputElement>(null);
-  useEffect(() => { searchInput.current?.focus(); }, []);
+  useLayoutEffect(() => { searchInput.current?.focus(); }, []);
   const query = search.trim().toLowerCase();
   const groups = EMOJI_GROUPS.filter(group => category === 'All' || group.name === category)
     .map(group => ({
