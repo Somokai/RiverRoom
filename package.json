@@ -1,0 +1,47 @@
+{
+  "name": "river-room",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A private multiplayer Texas Hold'em table with durable, per-session chip accounting.",
+  "engines": { "node": ">=24.0.0 <25" },
+  "scripts": {
+    "dev": "tsx watch src/server/index.ts",
+    "build": "npm run check && tsc -p tsconfig.server.json && vite build",
+    "build:client": "vite build",
+    "start": "node --env-file-if-exists=.env dist/server/index.js",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:bots": "tsx src/testing/run-bots.ts",
+    "test:azure": "tsx src/testing/verify-deployment.ts",
+    "start:test": "tsx src/server/index.ts"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "express": "5.2.1",
+    "express-rate-limit": "8.7.0",
+    "helmet": "8.3.0",
+    "lucide-react": "1.47.0",
+    "pg": "8.23.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "socket.io": "4.8.3",
+    "socket.io-client": "4.8.3",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/express": "5.0.6",
+    "@types/node": "24",
+    "@types/pg": "8.23.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
+  }
+}
