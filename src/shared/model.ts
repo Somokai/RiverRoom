@@ -70,6 +70,7 @@ export const DEFAULT_SETTINGS: RoomSettings = {
 export interface Player {
   id: string;
   name: string;
+  emoji?: string | null;
   seat: number | null;
   stack: number;
   buyIns: number;
@@ -209,6 +210,7 @@ export type Command =
   | { type: 'remove_bot'; playerId: string }
   | { type: 'transfer_host'; playerId: string }
   | { type: 'close' }
+  | { type: 'emoji'; emoji: string | null }
   | { type: 'chat'; message: string };
 
 export interface LegalActions {

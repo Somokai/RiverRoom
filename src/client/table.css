@@ -59,7 +59,12 @@
 .seat-cards:empty { height: 20px; margin-bottom: -2px; }.seat-cards .playing-card:first-child { transform: rotate(-7deg); }.seat-cards .playing-card:last-child { transform: rotate(7deg); }
 .seat-avatar-wrap { position: relative; height: 31px; z-index: 4; }.seat-avatar { height: 36px; width: 36px; border: 3px solid #1f2a21; background: var(--seat-color); color: #fff6e9; box-shadow: 0 2px 8px #0003; font-size: 10px; }
 .seat-panel { position: relative; background: linear-gradient(135deg, #29372c, #1b251e); border: 1px solid #99b09a35; box-shadow: 0 5px 12px #0004; border-radius: 8px; padding: 10px 6px 7px; overflow: hidden; }
-.seat-name { font-size: 10px; color: #d6dfd0; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.seat-name { font-size: 10px; color: #d6dfd0; display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 14px; white-space: nowrap; overflow: hidden; font-weight: 500; }
+.seat-name small { flex-shrink: 0; }
+.seat-name-button { width: 100%; border: 0; background: none; padding: 0; border-radius: 3px; }
+.seat-name-button:not(:disabled):hover { color: var(--gold); }
+.seat-name-button:focus-visible { outline-offset: -2px; }
+.seat-name-button:disabled { opacity: 1; }
 .seat-name small { font-size: 6px; color: #d7c086; }.seat-stack { font-size: 15px; font-weight: 600; margin-top: 4px; display: block; color: #f0eddc; font-variant-numeric: tabular-nums; }
 .seat-action { font-size: 7px; color: #98ad96; display: block; height: 9px; margin-top: 4px; letter-spacing: .2px; }
 .seat-folded { opacity: .53; }.seat-folded .seat-cards { opacity: .38; }

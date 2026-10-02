@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
 import { X, Spade } from 'lucide-react';
-import { boardRuns, chips, money, type BountyAward, type Card, type Hand, type HandRules, type RoomView } from '../shared/model';
+import { boardRuns, chips, money, type BountyAward, type Card, type Hand, type HandRules, type Player, type RoomView } from '../shared/model';
+import { findPlayerEmoji } from '../shared/emoji';
 
 export function Modal({ title, subtitle, close, children, wide = false }: PropsWithChildren<{
   title: string; subtitle?: string; close: () => void; wide?: boolean;
@@ -9,9 +10,14 @@ export function Modal({ title, subtitle, close, children, wide = false }: PropsW
   const titleId = useId();
   useEffect(() => {
     const dialog = ref.current!;
+    const previousFocus = document.activeElement;
     dialog.showModal();
     document.body.classList.add('modal-open');
-    return () => { dialog.close(); document.body.classList.remove('modal-open'); };
+    return () => {
+      dialog.close();
+      document.body.classList.remove('modal-open');
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
   }, []);
   return <dialog ref={ref} className={`modal ${wide ? 'modal-wide' : ''}`} aria-labelledby={titleId}
     onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === ref.current) close(); }}>
@@ -19,6 +25,15 @@ export function Modal({ title, subtitle, close, children, wide = false }: PropsW
       <button className="icon-button" aria-label="Close dialog" onClick={close}><X size={20} /></button></header>
     {children}
   </dialog>;
+}
+
+export function PlayerEmoji({ value }: { value?: string | null }) {
+  const choice = findPlayerEmoji(value);
+  return choice ? <span className="player-emoji" role="img" aria-label={choice.label} title={choice.label}>{choice.value}</span> : null;
+}
+
+export function PlayerName({ player }: { player: Pick<Player, 'name' | 'emoji'> }) {
+  return <span className="player-label"><span className="player-name-text" title={player.name}>{player.name}</span><PlayerEmoji value={player.emoji} /></span>;
 }
 
 const suits: Record<string, string> = { s: '\u2660', h: '\u2665', d: '\u2666', c: '\u2663' };

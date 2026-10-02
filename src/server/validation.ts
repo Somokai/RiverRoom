@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DEFAULT_SETTINGS } from '../shared/model.js';
+import { isPlayerEmoji } from '../shared/emoji.js';
 
 export const displayName = z.string().trim().min(2).max(24).regex(/^[^\u0000-\u001f\u007f]+$/, 'Use printable characters.');
 const amount = z.number().int().min(1).max(10_000_000);
@@ -40,6 +41,7 @@ export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('remove_bot'), playerId: z.string().max(80) }),
   z.object({ type: z.literal('transfer_host'), playerId: z.string().uuid() }),
   z.object({ type: z.literal('close') }),
+  z.object({ type: z.literal('emoji'), emoji: z.string().max(16).refine(isPlayerEmoji, 'Choose an emoji from the picker.').nullable() }),
   z.object({ type: z.literal('chat'), message: z.string().trim().min(1).max(240).regex(/^[^\u0000-\u001f\u007f]+$/) }),
 ]);
 export const commandEnvelope = z.object({

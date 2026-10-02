@@ -157,6 +157,51 @@ describe('persistent multiplayer service', () => {
     expect([11000, 12000]).toContain(latest.players[0]?.stack);
     expect((await store.verifyAudit(room.id)).valid).toBe(true);
   });
+  test('emoji changes are per-table, idempotent, and delivered live to other members', async () => {
+    const host = await guest('Emoji host');
+    const player = await guest('Emoji guest');
+    const outsider = await guest('Emoji outsider');
+    let room = await enter(await create(host), player);
+    const otherRoom = await create(player);
+    const before = room;
+    const socket = connectSocket(base, {
+      auth: { csrf: host.user.csrf }, extraHeaders: { Cookie: host.cookie, Origin: origin },
+      forceNew: true, reconnection: false,
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once('connect_error', reject);
+        socket.once('connect', () => socket.emit('subscribe', room.id, (ack: { ok: boolean }) =>
+          ack.ok ? resolve() : reject(new Error('Emoji subscription failed'))));
+      });
+      const update = new Promise<RoomView>(resolve => {
+        socket.on('room', (view: RoomView) => {
+          if (view.players.find(item => item.id === player.user.id)?.emoji === '\u{1F60E}') resolve(view);
+        });
+      });
+      const commandId = randomUUID();
+      const input = { type: 'emoji', emoji: '\u{1F60E}' };
+      const result = await command(room, player, input, commandId);
+      expect(result.response.status).toBe(200);
+      room = result.json.room;
+      expect((await update).players.find(item => item.id === player.user.id)?.emoji).toBe('\u{1F60E}');
+      expect(room.players.find(item => item.id === host.user.id)?.emoji).toBeNull();
+      expect((await get(otherRoom.id, player)).players[0]?.emoji).toBeNull();
+      const retry = await command(before, player, input, commandId);
+      expect(retry.json.duplicate).toBe(true);
+      expect(retry.json.room.version).toBe(room.version);
+      expect((await command(before, player, { type: 'emoji', emoji: null })).response.status).toBe(409);
+      expect((await command(room, outsider, input)).response.status).toBe(403);
+      for (const emoji of ['', 'hello', '\u{1F600}\u{1F600}', 123, undefined])
+        expect((await command(room, player, { type: 'emoji', emoji })).response.status).toBe(400);
+      const cleared = await command(room, player, { type: 'emoji', emoji: null });
+      expect(cleared.response.status).toBe(200);
+      expect(cleared.json.room.players.find((item: { id: string }) => item.id === player.user.id).emoji).toBeNull();
+      expect((await store.ledger(room.id)).entries).toHaveLength(1);
+      expect((await store.audit(room.id)).entries.filter(entry => entry.command === 'emoji')).toHaveLength(2);
+      expect((await store.verifyAudit(room.id)).valid).toBe(true);
+    } finally { socket.disconnect(); }
+  });
   test('recovery restores the same player and revokes old browser sessions', async () => {
     const host = await guest('Recover me');
     const room = await create(host);
@@ -222,10 +267,12 @@ describe('persistent multiplayer service', () => {
       const firstStore = new Store(local);
       const person = await firstStore.createIdentity('Persistent person');
       const saved = await firstStore.create(person.user, { name: 'Persistent table', settings: DEFAULT_SETTINGS, buyIn: 10000, commandId: randomUUID() });
+      await firstStore.execute(saved.id, person.user.id, randomUUID(), { type: 'emoji', emoji: '\u{1F988}' }, saved.version);
       await local.close(); local = null;
       local = await openDatabase({ directory: join(path, 'postgres') });
       const next = new Store(local);
       expect((await next.getRoom(saved.id)).players[0]?.stack).toBe(10000);
+      expect((await next.getRoom(saved.id)).players[0]?.emoji).toBe('\u{1F988}');
       expect((await next.identity(person.token))?.id).toBe(person.user.id);
       expect((await next.verifyAudit(saved.id)).valid).toBe(true);
       expect((await next.ledger(saved.id)).entries).toHaveLength(1);

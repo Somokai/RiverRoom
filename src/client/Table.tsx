@@ -1,9 +1,11 @@
 import type { CSSProperties } from 'react';
 import { Bot, Pause, Crown, WifiOff, Spade } from 'lucide-react';
 import { GAME_LABELS, chips, handGameLabel, isLegacyIndianHand, type RoomView } from '../shared/model';
-import { ChipStack, CommunityBoards, PlayingCard } from './ui';
+import { ChipStack, CommunityBoards, PlayerName, PlayingCard } from './ui';
 
-export function PokerTable({ room, now }: { room: RoomView; now: number }) {
+export function PokerTable({ room, now, onChooseEmoji, emojiDisabled = false }: {
+  room: RoomView; now: number; onChooseEmoji?: () => void; emojiDisabled?: boolean;
+}) {
   const hand = room.hand;
   const hero = room.players.find(player => player.id === room.youId)!;
   const game = hand?.rules.game ?? room.nextHandRules.game;
@@ -58,7 +60,10 @@ export function PokerTable({ room, now }: { room: RoomView; now: number }) {
             {player.hand && hand?.smallBlindSeat === seat && <span className="position-badge blind-badge" title="Small blind">SB</span>}
             {player.hand && hand?.bigBlindSeat === seat && <span className="position-badge blind-badge" title="Big blind">BB</span>}
           </div>
-          <div className="seat-panel"><span className="seat-name">{player.name}{isYou && <small> YOU</small>}</span>
+          <div className="seat-panel">{isYou && onChooseEmoji
+            ? <button type="button" className="seat-name seat-name-button" aria-label="Change your table emoji" aria-haspopup="dialog"
+              title="Change your table emoji" disabled={emojiDisabled} onClick={onChooseEmoji}><PlayerName player={player} /><small>YOU</small></button>
+            : <span className="seat-name"><PlayerName player={player} />{isYou && <small>YOU</small>}</span>}
             <strong className="seat-stack">{chips(player.stack)}</strong>
             <span className={`seat-action ${turn ? 'acting-label' : ''}`}>{room.status === 'closed' ? 'Cashed out' : turn ? room.paused ? 'Turn paused' : `${remaining}s to act`
               : runoutEligible ? runoutChoice ? `Runout: ${runoutChoice === 1 ? 'once' : `up to ${runoutChoice}`}` : 'Runout: pending'

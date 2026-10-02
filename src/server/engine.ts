@@ -6,6 +6,7 @@ import type {
 import { defaultHandRules, GAME_LABELS, handAnte, isLegacyIndianHand } from '../shared/model.js';
 import { evaluate, evaluateIndian, evaluateOmaha, shuffleDeck, type HandRank } from './cards.js';
 import { normalizeRoom, ROOM_SCHEMA_VERSION } from './state.js';
+import { isPlayerEmoji } from '../shared/emoji.js';
 
 export class GameError extends Error {
   constructor(message: string, public status = 400) { super(message); }
@@ -43,7 +44,7 @@ function join(room: Room, actorId: string, name: string, fx: Effects, ctx: Conte
   const seat = Array.from({ length: room.settings.maxSeats }, (_, i) => i).find(i => !room.players.some(player => player.seat === i));
   if (seat === undefined) throw new GameError('This table is full.', 409);
   if (existing) { existing.seat = seat; existing.sittingOut = false; }
-  else room.players.push({ id: actorId, name: name.trim(), seat, stack: 0, buyIns: 0, cashOuts: 0, rebuyCount: 0, addOnCount: 0, bountyNet: 0, sittingOut: false, timeoutCount: 0, bot: false, joinedAt: ctx.now });
+  else room.players.push({ id: actorId, name: name.trim(), emoji: null, seat, stack: 0, buyIns: 0, cashOuts: 0, rebuyCount: 0, addOnCount: 0, bountyNet: 0, sittingOut: false, timeoutCount: 0, bot: false, joinedAt: ctx.now });
   event(fx, ctx, 'join', `${name.trim()} joined seat ${seat + 1}.`, actorId);
 }
 function nextSeat(players: Array<{ seat: number }>, after: number): number {
@@ -590,6 +591,8 @@ export function assertRoom(room: Room) {
   validateHandRules(room.nextHandRules);
   const seats = room.players.flatMap(player => player.seat === null ? [] : [player.seat]);
   if (new Set(seats).size !== seats.length || new Set(room.players.map(player => player.id)).size !== room.players.length) throw new Error('Duplicate player or seat.');
+  if (room.players.some(player => player.emoji !== undefined && player.emoji !== null && !isPlayerEmoji(player.emoji)))
+    throw new Error('Invalid player emoji.');
   if (room.players.some(player => !integer(player.stack, 0, 1_000_000_000) || !integer(player.buyIns, 0, 1_000_000_000) || !integer(player.cashOuts, 0, 1_000_000_000))) throw new Error('Invalid account balance.');
   if (room.players.some(player => !Number.isSafeInteger(player.bountyNet))) throw new Error('Invalid signed bounty balance.');
   if (room.players.reduce((sum, player) => sum + BigInt(player.bountyNet), 0n) !== 0n) throw new Error('Bounty balances are not zero-sum.');
@@ -806,6 +809,13 @@ export function transition(original: Room, actorId: string, command: Command, ct
         event(fx, ctx, 'closing', 'Session will finish and cash out all stacks after this hand.', actorId);
       } else finishSession(room, fx, ctx);
       break;
+    case 'emoji': {
+      if (command.emoji !== null && !isPlayerEmoji(command.emoji)) throw new GameError('Choose an emoji from the picker.');
+      const player = findPlayer(room, actorId);
+      player.emoji = command.emoji;
+      event(fx, ctx, 'emoji', command.emoji ? `${player.name} chose ${command.emoji} as their table emoji.` : `${player.name} removed their table emoji.`, actorId);
+      break;
+    }
     case 'chat': {
       const message = command.message.trim();
       if (!message || message.length > 240) throw new GameError('Messages must be 1-240 characters.');

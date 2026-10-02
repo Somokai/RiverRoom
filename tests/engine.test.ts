@@ -4,6 +4,7 @@ import { makeDeck, evaluate, shuffleDeck } from '../src/server/cards';
 import { assertRoom, createRoom, legalActions, roomView, timeoutTurn, transition } from '../src/server/engine';
 import { verifyTransfers } from '../src/server/store';
 import { chooseBotAction } from '../src/server/bot';
+import { EMOJI_GROUPS, isPlayerEmoji } from '../src/shared/emoji';
 
 let now = 1800000000000;
 function apply(room: Room, actor: string, command: Command, deck?: string[]) {
@@ -80,6 +81,56 @@ describe('card evaluation and fair deck construction', () => {
       signatures.add(deck.join());
     }
     expect(signatures.size).toBe(20);
+  });
+});
+
+describe('per-table player emojis', () => {
+  test('the picker has distinct, named choices accepted by the server', () => {
+    const choices = EMOJI_GROUPS.flatMap(group => group.choices);
+    expect(new Set(choices.map(choice => choice.value)).size).toBe(choices.length);
+    expect(choices.every(choice => choice.label && choice.keywords && choice.value.length <= 16 && isPlayerEmoji(choice.value))).toBe(true);
+  });
+
+  test('each player changes only their emoji without changing an active hand or its accounts', () => {
+    const original = start(table());
+    const result = transition(original, 'p1', { type: 'emoji', emoji: '\u{1F60E}' }, { now: ++now });
+    expect(original.players[1]?.emoji).toBeNull();
+    expect(result.room.players[0]?.emoji).toBeNull();
+    expect(result.room.players[1]?.emoji).toBe('\u{1F60E}');
+    expect(result.room.hand).toEqual(original.hand);
+    expect(result.room.players.map(({ emoji: _emoji, ...player }) => player))
+      .toEqual(original.players.map(({ emoji: _emoji, ...player }) => player));
+    expect(result.transfers).toEqual([]);
+    expect(result.events).toEqual([expect.objectContaining({ kind: 'emoji', actorId: 'p1' })]);
+    expect(result.room.version).toBe(original.version + 1);
+    verifyTransfers(original, result.room, result.transfers);
+    for (const viewer of ['p0', 'p1'])
+      expect(roomView(result.room, viewer, new Set()).players[1]?.emoji).toBe('\u{1F60E}');
+    const paused = apply(result.room, 'p0', { type: 'pause', value: true });
+    const cleared = apply(paused, 'p1', { type: 'emoji', emoji: null });
+    expect(cleared.players[1]?.emoji).toBeNull();
+    expect(cleared.hand).toEqual(paused.hand);
+  });
+
+  test('legacy snapshots without emojis still work, and rejoining keeps the table selection', () => {
+    let room = table();
+    for (const player of room.players) delete player.emoji;
+    expect(() => assertRoom(room)).not.toThrow();
+    expect(roomView(room, 'p0', new Set()).players[1]?.emoji).toBeUndefined();
+    room = apply(room, 'p1', { type: 'emoji', emoji: '\u{1F988}' });
+    room = apply(room, 'p1', { type: 'cash_out' });
+    room = apply(room, 'p1', { type: 'join', name: 'Player 1' });
+    expect(room.players[1]?.emoji).toBe('\u{1F988}');
+    expect(table().players[1]?.emoji).toBeNull();
+  });
+
+  test('invalid values, nonmembers, and closed-session changes are rejected', () => {
+    const room = table();
+    for (const emoji of ['', 'hello', '<script>', '\u{1F600}\u{1F600}', 'a'.repeat(100)])
+      expect(() => apply(room, 'p1', { type: 'emoji', emoji })).toThrow('Choose an emoji');
+    expect(() => apply(room, 'outsider', { type: 'emoji', emoji: '\u{1F600}' })).toThrow('not a member');
+    const closed = apply(room, 'p0', { type: 'close' });
+    expect(() => apply(closed, 'p1', { type: 'emoji', emoji: null })).toThrow('closed');
   });
 });
 

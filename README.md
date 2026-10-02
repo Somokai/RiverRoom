@@ -233,6 +233,12 @@ them outside the app. Bot-related amounts remain virtual.
 ### Included
 
 - Two to nine seats, live presence, reconnect, invite links, table chat.
+- Per-table player emojis: click your name at your seat or the smiley/profile
+  control in the table header to search or browse the emoji picker. Choose or
+  remove an emoji at any time while the session is open, including during a
+  hand or while paused. Everyone sees updates live beside your name. Your
+  selection survives reconnects, restarts, and rejoining that table; other
+  tables keep their own selections. Existing tables start without emojis.
 - Server-only cryptographic shuffle and hand evaluation.
 - Dealer button, small/big blinds, optional per-player antes, heads-up order.
 - Legal action enforcement, minimum raises, short all-ins and cumulative

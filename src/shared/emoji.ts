@@ -1,0 +1,130 @@
+export interface PlayerEmojiOption {
+  value: string;
+  label: string;
+  keywords: string;
+}
+
+export const EMOJI_GROUPS: ReadonlyArray<{ name: string; choices: readonly PlayerEmojiOption[] }> = [
+  { name: 'Smileys', choices: [
+    { value: '\u{1F600}', label: 'Grinning face', keywords: 'happy smile' },
+    { value: '\u{1F603}', label: 'Big smile', keywords: 'happy eyes' },
+    { value: '\u{1F604}', label: 'Smiling eyes', keywords: 'happy grin' },
+    { value: '\u{1F601}', label: 'Beaming face', keywords: 'teeth happy grin' },
+    { value: '\u{1F606}', label: 'Laughing face', keywords: 'laugh happy' },
+    { value: '\u{1F605}', label: 'Nervous smile', keywords: 'sweat relief' },
+    { value: '\u{1F602}', label: 'Tears of joy', keywords: 'laugh funny lol' },
+    { value: '\u{1F923}', label: 'Rolling with laughter', keywords: 'laugh funny rofl' },
+    { value: '\u{1F609}', label: 'Winking face', keywords: 'wink bluff' },
+    { value: '\u{1F60A}', label: 'Blushing smile', keywords: 'happy shy' },
+    { value: '\u{1F607}', label: 'Smiling halo', keywords: 'angel innocent' },
+    { value: '\u{1F970}', label: 'Smiling with hearts', keywords: 'love happy' },
+    { value: '\u{1F60D}', label: 'Heart eyes', keywords: 'love happy' },
+    { value: '\u{1F929}', label: 'Star eyes', keywords: 'excited star struck' },
+    { value: '\u{1F618}', label: 'Blowing a kiss', keywords: 'love kiss' },
+    { value: '\u{1F60E}', label: 'Sunglasses', keywords: 'cool shades' },
+    { value: '\u{1F60F}', label: 'Smirking face', keywords: 'smug bluff' },
+    { value: '\u{1F61C}', label: 'Winking tongue', keywords: 'silly playful' },
+    { value: '\u{1F911}', label: 'Money mouth', keywords: 'rich chips win' },
+    { value: '\u{1F914}', label: 'Thinking face', keywords: 'think hmm decision' },
+    { value: '\u{1F92B}', label: 'Shushing face', keywords: 'quiet secret' },
+    { value: '\u{1F610}', label: 'Poker face', keywords: 'neutral blank expressionless' },
+    { value: '\u{1F644}', label: 'Rolling eyes', keywords: 'annoyed' },
+    { value: '\u{1F62C}', label: 'Grimacing face', keywords: 'nervous awkward' },
+    { value: '\u{1F634}', label: 'Sleeping face', keywords: 'tired sleepy' },
+    { value: '\u{1F62D}', label: 'Crying face', keywords: 'sad tears' },
+    { value: '\u{1F621}', label: 'Angry face', keywords: 'mad tilt' },
+    { value: '\u{1F631}', label: 'Screaming face', keywords: 'shocked scared' },
+    { value: '\u{1F920}', label: 'Cowboy', keywords: 'hat western' },
+    { value: '\u{1F973}', label: 'Party face', keywords: 'celebrate birthday' },
+    { value: '\u{1F608}', label: 'Smiling devil', keywords: 'horns mischief' },
+    { value: '\u{1F47B}', label: 'Ghost', keywords: 'boo spooky' },
+    { value: '\u{1F916}', label: 'Robot', keywords: 'bot machine' },
+  ] },
+  { name: 'Gestures', choices: [
+    { value: '\u{1F44D}', label: 'Thumbs up', keywords: 'yes good nice' },
+    { value: '\u{1F44E}', label: 'Thumbs down', keywords: 'no bad' },
+    { value: '\u{1F44B}', label: 'Waving hand', keywords: 'hello bye' },
+    { value: '\u{1F44C}', label: 'OK hand', keywords: 'okay perfect' },
+    { value: '\u270C\uFE0F', label: 'Victory hand', keywords: 'peace win' },
+    { value: '\u{1F91E}', label: 'Crossed fingers', keywords: 'luck hope' },
+    { value: '\u{1F44F}', label: 'Clapping hands', keywords: 'applause nice' },
+    { value: '\u{1F64C}', label: 'Raised hands', keywords: 'celebrate hooray' },
+    { value: '\u{1F64F}', label: 'Folded hands', keywords: 'please thanks pray' },
+    { value: '\u{1F4AA}', label: 'Flexed biceps', keywords: 'strong muscle' },
+  ] },
+  { name: 'Animals', choices: [
+    { value: '\u{1F436}', label: 'Dog', keywords: 'puppy pet' },
+    { value: '\u{1F431}', label: 'Cat', keywords: 'kitten pet' },
+    { value: '\u{1F42D}', label: 'Mouse', keywords: 'animal' },
+    { value: '\u{1F430}', label: 'Rabbit', keywords: 'bunny' },
+    { value: '\u{1F98A}', label: 'Fox', keywords: 'clever animal' },
+    { value: '\u{1F43B}', label: 'Bear', keywords: 'animal' },
+    { value: '\u{1F43C}', label: 'Panda', keywords: 'bear animal' },
+    { value: '\u{1F981}', label: 'Lion', keywords: 'king animal' },
+    { value: '\u{1F438}', label: 'Frog', keywords: 'animal' },
+    { value: '\u{1F435}', label: 'Monkey', keywords: 'animal' },
+    { value: '\u{1F984}', label: 'Unicorn', keywords: 'magic horse' },
+    { value: '\u{1F988}', label: 'Shark', keywords: 'fish poker ocean' },
+    { value: '\u{1F41F}', label: 'Fish', keywords: 'poker ocean' },
+    { value: '\u{1F422}', label: 'Turtle', keywords: 'slow animal' },
+  ] },
+  { name: 'Food & drink', choices: [
+    { value: '\u{1F34E}', label: 'Apple', keywords: 'fruit red' },
+    { value: '\u{1F34C}', label: 'Banana', keywords: 'fruit yellow' },
+    { value: '\u{1F349}', label: 'Watermelon', keywords: 'fruit' },
+    { value: '\u{1F355}', label: 'Pizza', keywords: 'food slice' },
+    { value: '\u{1F354}', label: 'Burger', keywords: 'food hamburger' },
+    { value: '\u{1F32E}', label: 'Taco', keywords: 'food' },
+    { value: '\u{1F369}', label: 'Doughnut', keywords: 'donut sweet' },
+    { value: '\u{1F382}', label: 'Birthday cake', keywords: 'party celebrate' },
+    { value: '\u2615', label: 'Coffee', keywords: 'tea drink caffeine' },
+    { value: '\u{1F37A}', label: 'Beer', keywords: 'drink cheers' },
+  ] },
+  { name: 'Activities', choices: [
+    { value: '\u{1F0CF}', label: 'Joker', keywords: 'poker card wild' },
+    { value: '\u{1F3B2}', label: 'Dice', keywords: 'game luck roll' },
+    { value: '\u{1F3AF}', label: 'Bullseye', keywords: 'darts target' },
+    { value: '\u{1F3C6}', label: 'Trophy', keywords: 'win champion' },
+    { value: '\u{1F947}', label: 'Gold medal', keywords: 'first win champion' },
+    { value: '\u26BD', label: 'Soccer ball', keywords: 'football sport' },
+    { value: '\u{1F3C0}', label: 'Basketball', keywords: 'sport' },
+    { value: '\u{1F3AE}', label: 'Game controller', keywords: 'gaming video' },
+    { value: '\u{1F3B8}', label: 'Guitar', keywords: 'music rock' },
+    { value: '\u{1F389}', label: 'Party popper', keywords: 'celebrate confetti' },
+  ] },
+  { name: 'Travel', choices: [
+    { value: '\u{1F697}', label: 'Car', keywords: 'drive race' },
+    { value: '\u{1F680}', label: 'Rocket', keywords: 'space launch' },
+    { value: '\u2708\uFE0F', label: 'Airplane', keywords: 'plane flight' },
+    { value: '\u{1F3DD}\uFE0F', label: 'Island', keywords: 'beach holiday' },
+    { value: '\u{1F30D}', label: 'Globe', keywords: 'world earth' },
+    { value: '\u2600\uFE0F', label: 'Sun', keywords: 'sunny weather' },
+    { value: '\u{1F319}', label: 'Moon', keywords: 'night crescent' },
+    { value: '\u{1F308}', label: 'Rainbow', keywords: 'sky color' },
+  ] },
+  { name: 'Symbols', choices: [
+    { value: '\u2764\uFE0F', label: 'Red heart', keywords: 'love' },
+    { value: '\u{1F49B}', label: 'Yellow heart', keywords: 'love gold' },
+    { value: '\u{1F525}', label: 'Fire', keywords: 'hot streak' },
+    { value: '\u2B50', label: 'Star', keywords: 'gold favorite' },
+    { value: '\u2728', label: 'Sparkles', keywords: 'magic shine' },
+    { value: '\u{1F48E}', label: 'Gem', keywords: 'diamond precious' },
+    { value: '\u{1F451}', label: 'Crown', keywords: 'king queen royalty' },
+    { value: '\u{1F340}', label: 'Four-leaf clover', keywords: 'luck lucky' },
+    { value: '\u{1F4AF}', label: 'Hundred points', keywords: 'perfect score' },
+    { value: '\u2660\uFE0F', label: 'Spade suit', keywords: 'poker cards' },
+    { value: '\u2665\uFE0F', label: 'Heart suit', keywords: 'poker cards' },
+    { value: '\u2666\uFE0F', label: 'Diamond suit', keywords: 'poker cards' },
+    { value: '\u2663\uFE0F', label: 'Club suit', keywords: 'poker cards' },
+  ] },
+];
+
+const emojiByValue = new Map(EMOJI_GROUPS.flatMap(group => group.choices.map(choice => [choice.value, choice] as const)));
+
+export function isPlayerEmoji(value: unknown): value is string {
+  return typeof value === 'string' && emojiByValue.has(value);
+}
+
+export function findPlayerEmoji(value: string | null | undefined): PlayerEmojiOption | undefined {
+  return value ? emojiByValue.get(value) : undefined;
+}
