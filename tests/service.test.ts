@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { io as connectSocket, type Socket } from 'socket.io-client';
 import { DEFAULT_SETTINGS, type Identity, type RoomView } from '../src/shared/model';
 import { openDatabase, type Database } from '../src/server/database';
@@ -62,6 +62,106 @@ beforeAll(async () => {
 afterAll(async () => { await server?.close(); await db?.close(); });
 
 describe('persistent multiplayer service', () => {
+  test('advanced stats are self-only, absent from shared payloads, and follow the recovered identity', async () => {
+    const host = await guest('Stats owner');
+    const player = await guest('Stats opponent');
+    const outsider = await guest('Stats outsider');
+    expect((await request('/me/stats')).response.status).toBe(401);
+    let room = await create(host);
+    room = await enter(room, player);
+    room = (await command(room, player, { type: 'fund', amount: 10000 })).json.room;
+    room = (await command(room, host, { type: 'approve', requestId: room.requests.at(-1)!.id, approve: true })).json.room;
+    room = (await command(room, host, { type: 'deal' })).json.room;
+    room = (await command(room, host, { type: 'act', action: 'raise', amount: 300 })).json.room;
+    expect((await request('/me/stats', undefined, host)).json.stats.totals.hands).toBe(0);
+    room = (await command(room, player, { type: 'act', action: 'fold' })).json.room;
+    const own = await request('/me/stats', undefined, host);
+    expect(own.response.status).toBe(200);
+    expect(own.response.headers.get('cache-control')).toBe('private, no-store');
+    expect(own.json.stats).toMatchObject({ userId: host.user.id, totals: { hands: 1, vpipHands: 1, pfrHands: 1, handsWon: 1 } });
+    expect((await request('/me/stats', undefined, player)).json.stats).toMatchObject({
+      userId: player.user.id, totals: { hands: 1, vpipHands: 0, pfrHands: 0, handsWon: 0 },
+    });
+    expect((await request('/me/stats', undefined, outsider)).json.stats).toMatchObject({ userId: outsider.user.id, totals: { hands: 0 } });
+    for (const viewer of [host, player, outsider]) {
+      for (const query of [`userId=${host.user.id}`, `playerId=${player.user.id}`, `roomId=${room.id}`])
+        expect((await request(`/me/stats?${query}`, undefined, viewer)).response.status).toBe(400);
+      for (const path of [`/users/${host.user.id}/stats`, `/players/${player.user.id}/stats`, `/rooms/${room.id}/stats`])
+        expect((await request(path, undefined, viewer)).response.status).toBe(404);
+      expect((await request('/me/stats', { userId: host.user.id, vpipHands: 999 }, viewer)).response.status).toBe(404);
+    }
+    const shared = [];
+    for (const path of ['/rooms', `/rooms/${room.id}`, `/rooms/${room.id}/hands`, `/rooms/${room.id}/ledger`,
+      `/rooms/${room.id}/audit`, `/rooms/${room.id}/export.json`])
+      shared.push((await request(path, undefined, player)).text);
+    const socket = connectSocket(base, { forceNew: true, reconnection: false, auth: { csrf: player.user.csrf },
+      extraHeaders: { Cookie: player.cookie, Origin: origin } });
+    try {
+      const view = await new Promise<RoomView>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Stats privacy socket timed out')), 4000);
+        socket.once('connect_error', error => { clearTimeout(timer); reject(error); });
+        socket.once('room', room => { clearTimeout(timer); resolve(room); });
+        socket.once('connect', () => socket.emit('subscribe', room.id, () => {}));
+      });
+      shared.push(JSON.stringify(view));
+    } finally { socket.disconnect(); }
+    for (const text of shared)
+      for (const field of ['stats', 'vpipHands', 'pfrHands', 'preflopOpportunities', 'postflopBetsRaises', 'showdownsWon'])
+        expect(text).not.toContain(`"${field}"`);
+    const recovered = await request('/auth/recover', { recoveryCode: host.recoveryCode });
+    const replacement: Guest = { ...host, user: recovered.json.user, cookie: recovered.response.headers.get('set-cookie')!.split(';')[0]! };
+    expect((await request('/me/stats', undefined, host)).response.status).toBe(401);
+    expect((await request('/me/stats', undefined, replacement)).json).toEqual(own.json);
+    await request('/auth/logout', {}, replacement);
+    expect((await request('/me/stats', undefined, replacement)).response.status).toBe(401);
+  });
+
+  test('a statistics query failure is reported, not returned as a zero-filled success', async () => {
+    const host = await guest('Stats error');
+    const stats = vi.spyOn(store, 'playerStats').mockRejectedValueOnce(new Error('Synthetic stats database failure'));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = await request('/me/stats', undefined, host);
+      expect(result.response.status).toBe(500);
+      expect(result.json).not.toHaveProperty('stats');
+      expect(result.json.error).toContain('Reference:');
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining('"event":"request_error"'));
+    } finally { stats.mockRestore(); logged.mockRestore(); }
+  });
+
+  test('private hand tracking survives a database reopen mid-hand and persists after completion and recovery', async () => {
+    const path = await mkdtemp(join(tmpdir(), 'river-room-stats-test-'));
+    let local: Database | null = null;
+    try {
+      local = await openDatabase({ directory: join(path, 'postgres') });
+      let persisted = new Store(local);
+      const person = await persisted.createIdentity('Persistent stats');
+      let room = await persisted.create(person.user, {
+        name: 'Stats persistence', settings: { ...DEFAULT_SETTINGS, autoDeal: false }, buyIn: 10000, commandId: randomUUID(),
+      });
+      room = (await persisted.execute(room.id, person.user.id, randomUUID(), { type: 'add_bot' }, room.version)).room;
+      room = (await persisted.execute(room.id, person.user.id, randomUUID(), { type: 'deal' }, room.version)).room;
+      room = (await persisted.execute(room.id, person.user.id, randomUUID(), { type: 'act', action: 'raise', amount: 300 }, room.version)).room;
+      expect((await persisted.playerStats(person.user.id)).totals.hands).toBe(0);
+      await local.close(); local = null;
+      local = await openDatabase({ directory: join(path, 'postgres') });
+      persisted = new Store(local);
+      await persisted.pauseAfterRestart();
+      room = await persisted.getRoom(room.id);
+      room = (await persisted.execute(room.id, person.user.id, randomUUID(), { type: 'pause', value: false }, room.version)).room;
+      room = (await persisted.execute(room.id, room.hand!.actorId!, randomUUID(), { type: 'act', action: 'fold' }, room.version, true)).room;
+      const completed = await persisted.playerStats(person.user.id);
+      expect(completed.totals).toMatchObject({ hands: 1, preflopOpportunities: 1, vpipHands: 1, pfrHands: 1, handsWon: 1 });
+      await local.close(); local = null;
+      local = await openDatabase({ directory: join(path, 'postgres') });
+      persisted = new Store(local);
+      const recovered = await persisted.recover(person.recoveryCode);
+      expect(recovered.user.id).toBe(person.user.id);
+      expect(await persisted.playerStats(recovered.user.id)).toEqual(completed);
+      expect((await persisted.verifyAudit(room.id)).valid).toBe(true);
+    } finally { await local?.close(); await rm(path, { recursive: true, force: true }); }
+  });
+
   test('connection-string SSL options cannot override certificate verification', async () => {
     for (const option of ['sslmode=no-verify', 'sslmode=disable', 'ssl=false', 'sslrootcert=other.pem']) {
       await expect(openDatabase({ url: `postgresql://fixture:fixture@localhost/riverroom?${option}`, ssl: true })).rejects.toThrow('Configure TLS with DATABASE_SSL');

@@ -6,6 +6,7 @@ import type {
 import type { Database, Queryable } from './database.js';
 import { assertRoom, createRoom, GameError, timeoutRunout, timeoutTurn, transition, type Transition } from './engine.js';
 import { normalizeHistory, normalizeRoom } from './state.js';
+import { getPlayerStats, recordPlayerStats } from './stats.js';
 
 export const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 export function canonical(value: unknown): string {
@@ -100,6 +101,8 @@ export class Store {
   }
   async logout(token: string) { await this.db.query('DELETE FROM rr_sessions WHERE token_hash=$1', [digest(token)]); }
 
+  async playerStats(userId: string) { return getPlayerStats(this.db, userId); }
+
   async getRoom(idOrCode: string, tx: Queryable = this.db, lock = false): Promise<Room> {
     const result = await tx.query<RoomRow>(
       `SELECT state FROM rr_rooms WHERE id=$1 OR code=$2${lock ? ' FOR UPDATE' : ''}`,
@@ -164,6 +167,7 @@ export class Store {
       await tx.query('INSERT INTO rr_hands(room_id,hand_id,hand_number,summary) VALUES($1,$2,$3,$4::jsonb)',
         [room.id, hand.id, hand.number, JSON.stringify(summary)]);
     }
+    await recordPlayerStats(tx, before, result, actorId, command);
   }
 
   async create(user: Identity, input: { name: string; settings: RoomSettings; buyIn: number; commandId: string }): Promise<Room> {

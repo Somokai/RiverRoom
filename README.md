@@ -271,11 +271,58 @@ real-money gaming certification, tournament elimination, or blind-level timer**.
 Recorded currency is bookkeeping only. This is an application for private
 home-game use, not a licensed online casino or a payment service.
 
+## Private advanced stats
+
+Open **My stats** from the lobby or the table's sidebar. Stats belong to your
+player identity across all of your sessions, including closed sessions and
+practice hands against bots. Recover the same profile with your recovery key
+to retain your stats when changing browsers. Each game can be viewed separately.
+
+| Stat | Definition |
+|---|---|
+| VPIP | Hands with a voluntary preflop call or raise / hands with a preflop decision opportunity |
+| PFR | Hands with a preflop raise / hands with a preflop decision opportunity |
+| AF | Postflop bets and raises / postflop calls; checks and folds are excluded |
+| WTSD | Hands reaching showdown without folding / hands where you saw a flop |
+| W$SD | Showdowns where you received any pot share / showdowns reached |
+| Hands won | Completed hands where you received any pot share / completed hands dealt to you |
+
+Blinds and antes never count as VPIP. Completing the small blind or making an
+all-in call does count; an uncalled raise still counts even if refunded.
+Repeated preflop calls or raises count only once per hand. The preflop
+denominator excludes walks, forced-only all-ins and bomb pots, because those
+hands offered no preflop decision. A timed-out check/fold still counts as a
+decision opportunity, but never as voluntary investment.
+
+Seeing the flop includes all-in runouts; folding before the flop excludes you.
+Ties and side-pot wins count as wins, even when the player lost chips overall.
+Multiple boards and runouts count as **one hand**, not multiple wins or
+showdowns. Bounties, funding, rebuys and cash-outs do not affect these metrics.
+Sitting-out, unfunded and observing players are not in a hand's sample.
+Counts and denominators accompany each stat. A dash means no eligible sample,
+not 0%; AF is infinite when there are bets/raises but no calls.
+
+Tracking starts with **newly dealt hands after this update is installed**.
+Older completed hands and hands already in progress at upgrade time are not
+backfilled from free-text journal messages. A tracked hand contributes only
+after it finishes. Partial tracking survives restarts, and retries cannot
+double-count a hand. This adds `rr_player_hand_stats` without changing existing
+room snapshots, balances or immutable history.
+
+`GET /api/me/stats` authenticates the session and always reads that identity's
+stats. It accepts no player-ID selector, has no host override, and returns
+`Cache-Control: private, no-store`. Aggregates are never attached to room
+snapshots, player lists, broadcasts, shared history or table exports; the browser
+does not persist them in local storage. Existing public table actions remain
+visible, so people can still make their own observations of play. As with the
+other stored records, database administrators have access to the underlying
+data; application privacy is not encryption against the server owner.
+
 ## Ledger and privacy
 
 All mutations execute in a database transaction, locking the room row. The
 version prevents stale decisions; a unique command key makes retries idempotent.
-Snapshots, transfers, hand results, and audit events commit together.
+Snapshots, transfers, hand results, audit events, and private statistics commit together.
 
 Every movement is a balanced transfer:
 
