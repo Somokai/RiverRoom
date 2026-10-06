@@ -57,6 +57,23 @@ CREATE TABLE IF NOT EXISTS rr_hands (
   PRIMARY KEY(room_id, hand_id)
 );
 CREATE INDEX IF NOT EXISTS rr_hands_room ON rr_hands(room_id, hand_number);
+CREATE TABLE IF NOT EXISTS rr_player_hand_stats (
+  room_id TEXT NOT NULL REFERENCES rr_rooms(id), hand_id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES rr_users(id),
+  game TEXT NOT NULL CHECK (game IN ('holdem','omaha','omaha_bomb','indian')),
+  started_at TIMESTAMPTZ NOT NULL, completed_at TIMESTAMPTZ,
+  preflop_opportunity BOOLEAN NOT NULL DEFAULT FALSE,
+  vpip BOOLEAN NOT NULL DEFAULT FALSE, pfr BOOLEAN NOT NULL DEFAULT FALSE,
+  postflop_bets_raises INTEGER NOT NULL DEFAULT 0 CHECK (postflop_bets_raises >= 0),
+  postflop_calls INTEGER NOT NULL DEFAULT 0 CHECK (postflop_calls >= 0),
+  saw_flop BOOLEAN NOT NULL DEFAULT FALSE, showdown BOOLEAN NOT NULL DEFAULT FALSE,
+  showdown_won BOOLEAN NOT NULL DEFAULT FALSE, hand_won BOOLEAN NOT NULL DEFAULT FALSE,
+  PRIMARY KEY(room_id, hand_id, user_id),
+  CHECK (NOT pfr OR vpip), CHECK (NOT vpip OR preflop_opportunity),
+  CHECK (NOT showdown_won OR showdown), CHECK (NOT showdown OR saw_flop)
+);
+CREATE INDEX IF NOT EXISTS rr_player_hand_stats_user ON rr_player_hand_stats(user_id, game)
+  WHERE completed_at IS NOT NULL;
 CREATE OR REPLACE FUNCTION rr_protect_history() RETURNS trigger AS $$
 BEGIN
   RAISE EXCEPTION 'River Room history is append-only';

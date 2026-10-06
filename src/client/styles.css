@@ -127,6 +127,21 @@ h2 { font-weight: 500; }
 .modal-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; margin-bottom: 25px; }
 .modal-heading h2 { font-family: var(--serif); font-size: 28px; line-height: 1.2; margin-bottom: 10px; font-weight: 400; }
 .modal-heading p { color: #95a293; font-size: 12px; line-height: 1.8; margin-bottom: 0; }
+.stats-privacy { display: flex; align-items: center; gap: 10px; border: 1px solid #62c49730; background: #62c4970a; color: #bed9c5; border-radius: 8px; padding: 12px; font-size: 12px; line-height: 1.6; }
+.stats-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 22px 0; }
+.stats-toolbar .field { margin: 0; width: min(100%, 300px); }
+.stats-sample { color: var(--muted); font-size: 13px; }
+.stats-sample strong { color: var(--gold); font-size: 26px; margin-right: 4px; font-variant-numeric: tabular-nums; }
+.stats-sample > span { display: block; margin-top: 6px; font-size: 11px; }
+.stats-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.stat-card { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 19px; min-width: 0; }
+.stat-card h3 { font-size: 15px; font-weight: 600; margin-bottom: 18px; }
+.stat-card h3 small { display: block; margin-top: 7px; font-size: 11px; font-weight: 400; color: var(--muted); }
+.stat-value { display: block; color: var(--gold); font-size: 33px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.stat-sample { display: block; font-size: 11px; color: #b6c0b6; margin: 9px 0 14px; }
+.stat-card p, .stats-notes p { color: var(--muted); font-size: 11px; line-height: 1.7; margin-bottom: 0; }
+.stats-notes { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 22px; }
+.stats-notes p + p { margin-top: 8px; }
 .emoji-search { display: flex; align-items: center; gap: 10px; border: 1px solid #ffffff25; border-radius: 8px; padding: 0 12px; color: var(--muted); }
 .emoji-search input { width: 100%; min-height: 44px; border: 0; background: none; font-size: 14px; }
 .emoji-categories { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px; }
@@ -174,6 +189,7 @@ h2 { font-weight: 500; }
   .session-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 700px) {
+  .stats-grid { grid-template-columns: 1fr; }.stats-nav-button > span { display: none; }
   .lobby-nav { height: 84px; padding: 0 23px; }.brand { font-size: 23px; }.brand-mark { width: 36px; height: 39px; }.private-pill { display: none; }.nav-right { gap: 10px; }
   .lobby-main { padding: 0 23px 40px; }.hero { grid-template-columns: 1fr; padding: 36px 0 25px; }
   .hero h1 { font-size: 58px; }.hero-copy > p { max-width: 420px; }.hero-copy .eyebrow { font-size: 8px; letter-spacing: 1.9px; }

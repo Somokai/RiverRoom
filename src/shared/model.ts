@@ -271,6 +271,27 @@ export interface Identity {
   csrf: string;
 }
 
+export interface PlayerStatsCounts {
+  hands: number;
+  preflopOpportunities: number;
+  vpipHands: number;
+  pfrHands: number;
+  postflopBetsRaises: number;
+  postflopCalls: number;
+  flopsSeen: number;
+  showdowns: number;
+  showdownsWon: number;
+  handsWon: number;
+}
+
+export interface PlayerStats {
+  userId: string;
+  trackedSince: string | null;
+  lastHandAt: string | null;
+  totals: PlayerStatsCounts;
+  games: Array<{ game: GameVariant; counts: PlayerStatsCounts }>;
+}
+
 export interface LedgerRow extends ChipTransfer {
   id: number;
   at: string;

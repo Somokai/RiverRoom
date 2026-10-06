@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { test, expect, type Page, type BrowserContext } from '@playwright/test';
-import type { Identity, RoomView } from '../../src/shared/model';
+import type { Identity, PlayerStats, RoomView } from '../../src/shared/model';
 
 async function dismissRecovery(page: Page) {
   await expect(page.getByRole('heading', { name: 'Keep your seat. Save this key.' })).toBeVisible();
@@ -67,6 +67,108 @@ async function checkAction(page: Page, roomId: string) {
   await action.click();
   await expect.poll(async () => (await getRoom(page, roomId)).version).toBeGreaterThan(view.version);
 }
+
+test('private advanced stats use real completed hands, stay personal, and work in the lobby and on mobile', async ({ page, browser }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const initial = await createTable(page, 'Private stats table');
+  const context = await browser.newContext();
+  const other = await context.newPage();
+  try {
+    await guestJoin(other, initial.code, 'Stats guest');
+    await buyIn(other);
+    await page.getByRole('button', { name: 'Approve Stats guest' }).click();
+    await page.getByRole('button', { name: 'Deal first hand', exact: true }).click();
+    await page.getByRole('button', { name: 'Raise to 300', exact: true }).click();
+    await other.getByRole('button', { name: 'Fold', exact: true }).click();
+    await expect(page.locator('.street-label')).toHaveText('HAND COMPLETE');
+    await page.getByRole('button', { name: 'My stats', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'My advanced stats' });
+    await expect(dialog.locator('.stats-privacy')).toContainText('Other players and table hosts cannot view');
+    await expect(dialog.locator('.stats-sample')).toContainText('1 completed tracked hand');
+    await expect(dialog.getByRole('article', { name: 'VPIP', exact: true }).locator('.stat-value')).toHaveText('100.0%');
+    await expect(dialog.getByRole('article', { name: 'PFR', exact: true }).locator('.stat-sample')).toHaveText('1 of 1 preflop opportunities');
+    await expect(dialog.getByRole('article', { name: 'WTSD', exact: true }).locator('.stat-value')).toHaveText('\u2014');
+    await other.getByRole('button', { name: 'My stats', exact: true }).click();
+    await expect(other.getByRole('article', { name: 'VPIP', exact: true }).locator('.stat-value')).toHaveText('0.0%');
+    for (const client of [page, other]) {
+      await expect(client.locator('.player-list')).not.toContainText('VPIP');
+      const identity = await getIdentity(client);
+      const own = await client.request.get('/api/me/stats');
+      expect((await own.json() as { stats: PlayerStats }).stats.userId).toBe(identity.id);
+    }
+    await dialog.getByLabel('Stats game').selectOption('indian');
+    await expect(dialog.getByText('No completed tracked hands yet for this game.')).toBeVisible();
+    await dialog.getByLabel('Stats game').selectOption('all');
+    let room = await getRoom(page, initial.id);
+    room = await serverCommand(page, room.id, { type: 'next_hand', rules: { ...room.nextHandRules, game: 'omaha_bomb', bombAnte: 25 } });
+    room = await serverCommand(page, room.id, { type: 'deal' });
+    for (let count = 0; room.hand?.street !== 'complete'; count++) {
+      expect(count).toBeLessThan(10);
+      const actor = room.hand?.actorId === initial.youId ? page : other;
+      room = await serverCommand(actor, room.id, { type: 'act', action: 'check' });
+    }
+    await expect(dialog.locator('.stats-sample')).toContainText('2 completed tracked hands');
+    await dialog.getByLabel('Stats game').selectOption('omaha_bomb');
+    await expect(dialog.getByRole('article', { name: 'VPIP', exact: true }).locator('.stat-value')).toHaveText('N/A');
+    await expect(dialog.getByRole('article', { name: 'WTSD', exact: true }).locator('.stat-value')).toHaveText('100.0%');
+    await dialog.getByLabel('Stats game').selectOption('holdem');
+    await expect(dialog.locator('.stats-sample')).toContainText('1 completed tracked hand');
+    await expect(dialog.getByRole('article', { name: 'VPIP', exact: true }).locator('.stat-value')).toHaveText('100.0%');
+    await page.setViewportSize({ width: 360, height: 800 });
+    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await dialog.getByRole('button', { name: 'Close dialog' }).click();
+    await expect(page.getByRole('button', { name: 'My stats', exact: true })).toBeFocused();
+    await page.getByRole('button', { name: 'Back to your sessions', exact: true }).click();
+    await page.getByRole('button', { name: 'My stats', exact: true }).click();
+    await expect(dialog.locator('.stats-sample')).toContainText('2 completed tracked hands');
+    await page.keyboard.press('Escape');
+    await page.reload();
+    await page.getByRole('button', { name: 'My stats', exact: true }).click();
+    await expect(dialog.locator('.stats-sample')).toContainText('2 completed tracked hands');
+    await page.getByRole('button', { name: 'Close dialog' }).click();
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await expect(page.getByRole('button', { name: 'My stats', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'My advanced stats' })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally { await context.close(); }
+});
+
+test('private stats distinguish an empty sample from a load failure and clear on session expiry', async ({ page }) => {
+  await createTable(page, 'Stats loading states');
+  await page.getByRole('button', { name: 'Lobby', exact: true }).click();
+  await page.route('**/api/me/stats', route => route.fulfill({ status: 503, contentType: 'application/json',
+    body: JSON.stringify({ error: 'Stats are temporarily unavailable.' }) }));
+  await page.getByRole('button', { name: 'My stats', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'My advanced stats' });
+  await expect(dialog.getByRole('alert')).toContainText('Stats are temporarily unavailable.');
+  await expect(dialog.locator('.stat-card')).toHaveCount(0);
+  await expect(dialog.getByText('No completed tracked hands yet.')).toHaveCount(0);
+  await page.unroute('**/api/me/stats');
+  await dialog.getByRole('button', { name: 'Retry stats' }).click();
+  await expect(dialog.getByText('No completed tracked hands yet.')).toBeVisible();
+  await expect(dialog.locator('.stats-notes')).toContainText('Older hands are not backfilled');
+  await page.route('**/api/me/stats', route => route.fulfill({ status: 401, contentType: 'application/json',
+    body: JSON.stringify({ error: 'Your session has expired.' }) }));
+  await dialog.getByRole('button', { name: 'Refresh stats' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'My stats', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Recover profile' })).toBeVisible();
+});
+
+test('a profile switch during a stats request never exposes stats for a different identity', async ({ page }) => {
+  await createTable(page, 'Stats identity switch');
+  await page.getByRole('button', { name: 'Lobby', exact: true }).click();
+  const response = await page.request.get('/api/me/stats');
+  const result = await response.json() as { stats: PlayerStats };
+  result.stats.userId = 'a-different-authenticated-profile';
+  result.stats.totals.hands = 777;
+  await page.route('**/api/me/stats', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(result) }));
+  await page.getByRole('button', { name: 'My stats', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Recover profile' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'My advanced stats' })).toHaveCount(0);
+  await expect(page.locator('.stats-sample')).toHaveCount(0);
+});
 
 test('two independent players can play, reconnect, rebuy, cash out, and reconcile a finished session', async ({ page, browser }) => {
   const errors: string[] = [];
