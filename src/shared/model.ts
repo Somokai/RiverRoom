@@ -70,6 +70,7 @@ export const DEFAULT_SETTINGS: RoomSettings = {
 export interface Player {
   id: string;
   name: string;
+  emoji?: string | null;
   seat: number | null;
   stack: number;
   buyIns: number;
@@ -209,6 +210,7 @@ export type Command =
   | { type: 'remove_bot'; playerId: string }
   | { type: 'transfer_host'; playerId: string }
   | { type: 'close' }
+  | { type: 'emoji'; emoji: string | null }
   | { type: 'chat'; message: string };
 
 export interface LegalActions {
@@ -309,9 +311,17 @@ export function boardRuns(hand: Pick<Hand, 'boards' | 'runoutBoards'>): Card[][]
   return hand.runoutBoards.length ? hand.runoutBoards : [hand.boards];
 }
 
-export const chips = (value: number) => new Intl.NumberFormat('en-US').format(value);
-export const money = (value: number, currency: string = 'USD') =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value / 100);
+const chipFormatter = new Intl.NumberFormat('en-US');
+const currencyFormatters = new Map<string, Intl.NumberFormat>();
+export const chips = (value: number) => chipFormatter.format(value);
+export function money(value: number, currency: string = 'USD') {
+  let formatter = currencyFormatters.get(currency);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat('en-US', { style: 'currency', currency });
+    currencyFormatters.set(currency, formatter);
+  }
+  return formatter.format(value / 100);
+}
 
 export function presetRaise(
   legal: LegalActions,

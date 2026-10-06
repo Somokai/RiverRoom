@@ -155,6 +155,188 @@ test('two independent players can play, reconnect, rebuy, cash out, and reconcil
   } finally { await guestContext.close(); }
 });
 
+test('per-table emojis update live, survive reconnects, and can be searched, changed, and removed on mobile', async ({ page, browser }, testInfo) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const initial = await createTable(page, 'Emoji table', 2);
+  const guestName = 'Leo The River Room Shark';
+  const guestContext = await browser.newContext();
+  const guestPage = await guestContext.newPage();
+  guestPage.on('pageerror', error => errors.push(error.message));
+  try {
+    await guestJoin(guestPage, initial.code, guestName);
+    const guestIdentity = await getIdentity(guestPage);
+    await guestPage.getByRole('button', { name: 'Choose table emoji', exact: true }).click();
+    const picker = guestPage.getByRole('dialog', { name: 'Choose your table emoji', exact: true });
+    await expect(guestPage.getByRole('searchbox', { name: 'Search emojis' })).toBeFocused();
+    await expect(picker.getByRole('button', { name: 'Remove emoji', exact: true })).toBeDisabled();
+    await picker.getByRole('searchbox').fill('no-such-emoji');
+    await expect(picker.getByRole('status')).toHaveText('No emojis found. Try another search.');
+    await picker.getByRole('searchbox').fill('cool');
+    await picker.getByRole('button', { name: 'Choose Sunglasses', exact: true }).click();
+    await expect(picker).toHaveCount(0);
+    await expect(guestPage.locator('.hero-seat').getByRole('img', { name: 'Sunglasses', exact: true })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Poker table' }).getByRole('img', { name: 'Sunglasses', exact: true })).toBeVisible();
+    await expect(page.locator('.player-row').filter({ hasText: guestName }).getByRole('img', { name: 'Sunglasses', exact: true })).toBeVisible();
+    await expect(page.locator('.hero-seat .player-emoji')).toHaveCount(0);
+
+    const ownSeat = page.getByRole('button', { name: 'Change your table emoji', exact: true });
+    await ownSeat.focus();
+    await ownSeat.press('Enter');
+    await page.getByRole('group', { name: 'Emoji categories' }).getByRole('button', { name: 'Animals', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Choose Sunglasses', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Choose Shark', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(guestPage.getByRole('region', { name: 'Poker table' }).getByRole('img', { name: 'Shark', exact: true })).toBeVisible();
+
+    await buyIn(guestPage);
+    await page.getByRole('button', { name: `Approve ${guestName}` }).click();
+    await expect(guestPage.locator('.bankroll-main strong').first()).toContainText('10,000');
+    await page.getByRole('button', { name: 'Deal first hand' }).click();
+    await expect(guestPage.locator('.street-label')).toHaveText('PREFLOP');
+    const before = await getRoom(guestPage, initial.id);
+    await guestPage.getByRole('button', { name: 'Choose table emoji', exact: true }).click();
+    await picker.getByRole('searchbox').fill('streak');
+    await picker.getByRole('button', { name: 'Choose Fire', exact: true }).click();
+    await expect(picker).toHaveCount(0);
+    expect((await getRoom(guestPage, initial.id)).hand).toEqual(before.hand);
+    expect((await getIdentity(guestPage)).name).toBe(guestIdentity.name);
+    await serverCommand(page, initial.id, { type: 'pause', value: true });
+
+    await guestPage.reload();
+    await expect(guestPage.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+    await expect(guestPage.locator('.hero-seat').getByRole('img', { name: 'Fire', exact: true })).toBeVisible();
+    const second = await post(guestPage, '/rooms', {
+      name: 'Separate emoji table', settings: initial.settings, buyIn: 10000, commandId: crypto.randomUUID(),
+    });
+    await guestPage.goto(`/?table=${second.room.id}`);
+    await expect(guestPage.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+    await expect(guestPage.locator('.hero-seat .player-emoji')).toHaveCount(0);
+    await guestPage.goto(`/?table=${initial.id}`);
+    await expect(guestPage.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+    await expect(guestPage.locator('.hero-seat').getByRole('img', { name: 'Fire', exact: true })).toBeVisible();
+
+    await guestPage.getByRole('button', { name: 'Choose table emoji', exact: true }).click();
+    await expect(picker.getByRole('button', { name: 'Choose Fire', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await guestPage.keyboard.press('Escape');
+    await expect(picker).toHaveCount(0);
+    await expect(guestPage.getByRole('button', { name: 'Choose table emoji', exact: true })).toBeFocused();
+
+    await guestPage.setViewportSize({ width: 390, height: 844 });
+    await guestPage.getByRole('button', { name: 'Change your table emoji', exact: true }).click();
+    expect(await guestPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    const bounds = await picker.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+    await guestPage.screenshot({ path: testInfo.outputPath('emoji-picker-mobile.png'), fullPage: true, animations: 'disabled' });
+    await guestPage.route(`**/api/rooms/${initial.id}/commands`, route =>
+      route.fulfill({ status: 409, json: { error: 'The table changed. Please choose your emoji again.' } }), { times: 1 });
+    await picker.getByRole('button', { name: 'Choose Winking face', exact: true }).click();
+    await expect(picker.getByRole('alert')).toContainText('The table changed.');
+    await expect(picker.getByRole('button', { name: 'Choose Fire', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await picker.getByRole('button', { name: 'Choose Winking face', exact: true }).click();
+    await expect(picker).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Poker table' }).getByRole('img', { name: 'Winking face', exact: true })).toBeVisible();
+    await guestPage.screenshot({ path: testInfo.outputPath('table-emoji-mobile.png'), fullPage: true, animations: 'disabled' });
+    await guestPage.getByRole('button', { name: 'Change your table emoji', exact: true }).click();
+    await picker.getByRole('button', { name: 'Remove emoji', exact: true }).click();
+    await expect(picker).toHaveCount(0);
+    await expect(guestPage.locator('.hero-seat .player-emoji')).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Poker table' }).getByRole('img', { name: 'Winking face', exact: true })).toHaveCount(0);
+    await expect(page.locator('.hero-seat').getByRole('img', { name: 'Shark', exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally { await guestContext.close(); }
+});
+
+test('emoji interactions avoid recurring formatting work and delayed hover feedback', async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    const counters = { numberFormats: 0, formatCalls: 0 };
+    Object.defineProperty(window, 'uiCounters', { value: counters });
+    const originalFormat = Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, 'format')?.get;
+    if (!originalFormat) throw new Error('Missing number formatter accessor.');
+    Object.defineProperty(Intl.NumberFormat.prototype, 'format', {
+      configurable: true,
+      get() {
+        const format: (value: number | bigint) => string = originalFormat.call(this);
+        return (value: number | bigint) => { counters.formatCalls++; return format(value); };
+      },
+    });
+    Intl.NumberFormat = new Proxy(Intl.NumberFormat, {
+      construct(target, args) { counters.numberFormats++; return Reflect.construct(target, args); },
+    });
+  });
+  let room = await createTable(page, 'Responsive table', 9);
+  for (let seat = 1; seat < 9; seat++) room = await serverCommand(page, room.id, { type: 'add_bot' });
+  await expect(page.locator('.player-row')).toHaveCount(9);
+  const session = await page.context().newCDPSession(page);
+  await session.send('Performance.enable');
+  const metrics = async () => {
+    const result = await session.send('Performance.getMetrics');
+    const read = (name: string) => {
+      const value = result.metrics.find(metric => metric.name === name)?.value;
+      if (value === undefined) throw new Error(`Missing browser performance metric: ${name}`);
+      return value;
+    };
+    return { script: read('ScriptDuration'), task: read('TaskDuration') };
+  };
+  const before = await metrics();
+  const idleWork = await page.evaluate(async () => {
+    const counters = (window as typeof window & { uiCounters: { numberFormats: number; formatCalls: number } }).uiCounters;
+    const start = { ...counters };
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    return { constructors: counters.numberFormats - start.numberFormats, formats: counters.formatCalls - start.formatCalls };
+  });
+  const after = await metrics();
+  const openTimes: number[] = [];
+  const trigger = page.getByRole('button', { name: 'Choose table emoji', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Choose your table emoji', exact: true });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    openTimes.push(await trigger.evaluate(async element => {
+      if (!(element instanceof HTMLButtonElement)) throw new Error('Expected the emoji picker button.');
+      element.focus();
+      const started = performance.now();
+      const painted = new Promise<number>(resolve => {
+        const observer = new MutationObserver(() => {
+          if (document.querySelector('dialog[open]')) {
+            observer.disconnect();
+            requestAnimationFrame(() => setTimeout(() => resolve(performance.now() - started), 0));
+          }
+        });
+        observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] });
+      });
+      element.click();
+      return painted;
+    }));
+    await expect(dialog).toBeVisible();
+    if (attempt < 4) await page.keyboard.press('Escape');
+  }
+  const styles = await dialog.evaluate(element => ({
+    backdropFilter: getComputedStyle(element, '::backdrop').backdropFilter,
+    hoverDuration: getComputedStyle(element.querySelector('.emoji-choice')!).transitionDuration,
+  }));
+  const pickerWork = await page.evaluate(async () => {
+    const counters = (window as typeof window & { uiCounters: { numberFormats: number; formatCalls: number } }).uiCounters;
+    const start = { ...counters };
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    return { constructors: counters.numberFormats - start.numberFormats, formats: counters.formatCalls - start.formatCalls };
+  });
+  const report = {
+    idleWork, pickerWork, openTimes, ...styles,
+    idleScriptMs: (after.script - before.script) * 1000,
+    idleTaskMs: (after.task - before.task) * 1000,
+  };
+  console.log('UI responsiveness:', JSON.stringify(report));
+  await testInfo.attach('ui-responsiveness', { body: JSON.stringify(report, null, 2), contentType: 'application/json' });
+  expect(idleWork).toEqual({ constructors: 0, formats: 0 });
+  expect(pickerWork).toEqual({ constructors: 0, formats: 0 });
+  expect(styles.hoverDuration.split(',').every(duration => parseFloat(duration) === 0)).toBe(true);
+  expect(styles.backdropFilter).toBe('none');
+  await dialog.getByRole('button', { name: 'Choose Sunglasses', exact: true }).hover();
+  await expect(dialog.getByRole('button', { name: 'Choose Sunglasses', exact: true })).toHaveCSS('border-color', 'rgb(228, 193, 125)');
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+});
+
 test('desktop and phone layouts expose real controls without horizontal overflow', async ({ page, browser }) => {
   const folder = resolve('preview');
   await mkdir(folder, { recursive: true });

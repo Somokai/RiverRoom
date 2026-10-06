@@ -59,6 +59,11 @@ h2 { font-weight: 500; }
 .avatar { display: inline-flex; align-items: center; justify-content: center; color: #d9cda8; background: #4f5740; font-weight: 600; font-size: 13px; border: 1px solid #ffffff17; border-radius: 50%; flex-shrink: 0; }
 .small-avatar { width: 30px; height: 30px; font-size: 11px; }
 .profile-chip { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #c4cec4; max-width: 220px; overflow: hidden; white-space: nowrap; }
+.profile-emoji-button { background: none; border: 0; border-radius: 6px; padding: 4px; }
+.profile-emoji-button:not(:disabled):hover { color: var(--gold); background: #ffffff08; }
+.player-label { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; vertical-align: middle; }
+.player-name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-emoji { flex-shrink: 0; font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; font-size: 1.3em; line-height: 1.2; font-weight: 400; }
 .lobby-shell { background: radial-gradient(ellipse 65% 48% at 72% 23%, #24372a50, transparent), #111613; min-height: 100dvh; }
 .lobby-nav { height: 104px; max-width: 1280px; margin: auto; padding: 0 48px; display: flex; align-items: center; justify-content: space-between; }
 .private-pill { padding: 8px 11px; border: 1px solid #ffffff13; border-radius: 20px; display: inline-flex; align-items: center; gap: 7px; font-size: 8px; letter-spacing: 1.7px; color: #92a297; }
@@ -117,11 +122,28 @@ h2 { font-weight: 500; }
 .info-banner { background: #253629; border: 1px solid #87ab6a20; color: #c0d4ad; }
 .connection-banner { background: #4a3c2040; border: 1px solid #c59c4030; color: #d6bb7d; }
 .modal { border: 1px solid #4e5b4b; border-radius: 17px; background: #1a211c; color: #e5e9e1; padding: 28px; width: min(500px, calc(100vw - 30px)); max-height: calc(100dvh - 50px); overflow: auto; box-shadow: 0 30px 100px #0008; }
-.modal::backdrop { background: #07100bc7; backdrop-filter: blur(6px); }
+.modal::backdrop { background: #07100bd9; }
 .modal-wide { width: min(950px, calc(100vw - 30px)); }
 .modal-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; margin-bottom: 25px; }
 .modal-heading h2 { font-family: var(--serif); font-size: 28px; line-height: 1.2; margin-bottom: 10px; font-weight: 400; }
 .modal-heading p { color: #95a293; font-size: 12px; line-height: 1.8; margin-bottom: 0; }
+.emoji-search { display: flex; align-items: center; gap: 10px; border: 1px solid #ffffff25; border-radius: 8px; padding: 0 12px; color: var(--muted); }
+.emoji-search input { width: 100%; min-height: 44px; border: 0; background: none; font-size: 14px; }
+.emoji-categories { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px; }
+.emoji-categories button { min-height: 34px; font-size: 11px; }
+.emoji-categories button[aria-pressed="true"] { background: #e4c17d18; border-color: var(--gold); color: var(--gold); }
+.emoji-count { margin: 14px 0 8px; color: var(--muted); font-size: 12px; }
+.emoji-results { max-height: min(320px, 40dvh); overflow-y: auto; scrollbar-width: thin; padding: 4px; }
+.emoji-group + .emoji-group { margin-top: 18px; }
+.emoji-group h3 { color: #b9c7b9; font-size: 12px; font-weight: 500; margin-bottom: 8px; }
+.emoji-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 4px; }
+.emoji-choice { min-width: 0; height: 44px; border: 1px solid transparent; border-radius: 8px; background: none; font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; font-size: 27px; line-height: 1; }
+.emoji-choice, .emoji-categories button, .emoji-footer button { transition: none; }
+.emoji-choice:not(:disabled):hover, .emoji-choice[aria-pressed="true"] { background: #e4c17d18; border-color: var(--gold); }
+.emoji-choice:focus-visible { outline-offset: 0; }
+.emoji-footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; border-top: 1px solid var(--line); padding-top: 16px; margin-top: 16px; }
+.emoji-footer > span { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.emoji-footer .player-emoji { font-size: 24px; }
 .field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; min-width: 0; }
 .field > span { color: #b6c0b6; font-size: 11px; font-weight: 500; }
 .field input, .field select { height: 43px; padding: 9px 12px; width: 100%; font-size: 13px; }
