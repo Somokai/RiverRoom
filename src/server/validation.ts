@@ -1,8 +1,13 @@
 import { z } from 'zod';
 import { DEFAULT_SETTINGS } from '../shared/model.js';
 import { isPlayerEmoji } from '../shared/emoji.js';
+import { EMOTES, type EmoteId } from '../shared/emotes.js';
 
 export const displayName = z.string().trim().min(2).max(24).regex(/^[^\u0000-\u001f\u007f]+$/, 'Use printable characters.');
+export const emoteSchema = z.object({
+  roomId: z.string().min(1).max(80),
+  emote: z.enum(Object.keys(EMOTES) as [EmoteId, ...EmoteId[]]),
+}).strict();
 const amount = z.number().int().min(1).max(10_000_000);
 export const handRulesSchema = z.object({
   game: z.enum(['holdem', 'omaha', 'omaha_bomb', 'indian']),

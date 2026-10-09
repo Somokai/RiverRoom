@@ -233,6 +233,16 @@ them outside the app. Bot-related amounts remain virtual.
 ### Included
 
 - Two to nine seats, live presence, reconnect, invite links, table chat.
+- Seat emotes: right-click your name (or use its speech-bubble button) to say
+  **Hello**, **Nice hand!**, **Sorry...**, or **Well played**. Emotes appear above
+  the sender's seat for four seconds, with a server-enforced three-second
+  cooldown. They work during play or while paused and never alter a hand,
+  table version, ledger, or journal. Old emotes are not replayed on reconnect.
+  Right-click another player's seat name to **Mute emotes** or **Unmute emotes**.
+  This affects only your view; preferences stay in this browser, per profile and
+  table, and do not mute chat. Keyboard users can focus a seat name and press
+  Shift+F10, then use arrow keys and Enter; Escape dismisses the menu. Tapping
+  another player's seat name also opens its mute menu.
 - Per-table player emojis: click your name at your seat or the smiley/profile
   control in the table header to search or browse the emoji picker. Choose or
   remove an emoji at any time while the session is open, including during a
