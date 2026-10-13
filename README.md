@@ -233,6 +233,21 @@ them outside the app. Bot-related amounts remain virtual.
 ### Included
 
 - Two to nine seats, live presence, reconnect, invite links, table chat.
+- Live table animations: cards travel from the deck to each seat in deal order;
+  new community cards are dealt and newly public hole cards turn face up.
+  Bets, calls, raises and blinds build a separate chip pile in front of each
+  player. Those piles sweep into the middle only when the street's betting is
+  finished; antes go directly into the collected pot. Uncalled chips return
+  to their owner, and payouts travel from the middle to
+  the winners, including split/side-pot awards. The center shows the collected
+  pot separately from the total including live wagers. This distinction
+  remains when animations are off; server betting limits use the full pot.
+  Animations use only the player's redacted view; balances, legal actions and
+  turn clocks update immediately rather than waiting for the visuals.
+  **Animations** below the table offers **Follow system**, **On**, and **Off**,
+  saved in this browser. Follow system respects reduced motion. Resizing,
+  disconnecting, changing board-run tabs, or switching away cancels movement;
+  reconnects and missed updates show current state without replaying old hands.
 - Per-table player emojis: click your name at your seat or the smiley/profile
   control in the table header to search or browse the emoji picker. Choose or
   remove an emoji at any time while the session is open, including during a

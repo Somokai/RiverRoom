@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type Prop
 import { X, Spade } from 'lucide-react';
 import { boardRuns, chips, money, type BountyAward, type Card, type Hand, type HandRules, type Player, type RoomView } from '../shared/model';
 import { findPlayerEmoji } from '../shared/emoji';
+import { boardCardKey } from './tableMotion';
 
 export function Modal({ title, subtitle, close, children, wide = false }: PropsWithChildren<{
   title: string; subtitle?: string; close: () => void; wide?: boolean;
@@ -39,15 +40,15 @@ export function PlayerName({ player }: { player: Pick<Player, 'name' | 'emoji'> 
 const suits: Record<string, string> = { s: '\u2660', h: '\u2665', d: '\u2666', c: '\u2663' };
 const suitNames: Record<string, string> = { s: 'spades', h: 'hearts', d: 'diamonds', c: 'clubs' };
 const rankNames: Record<string, string> = { A: 'Ace', K: 'King', Q: 'Queen', J: 'Jack', T: '10' };
-export function PlayingCard({ card, small = false, index = 0, placeholder = false }: {
-  card?: Card | null; small?: boolean; index?: number; placeholder?: boolean;
+export function PlayingCard({ card, small = false, index = 0, placeholder = false, motionKey }: {
+  card?: Card | null; small?: boolean; index?: number; placeholder?: boolean; motionKey?: string;
 }) {
-  if (placeholder) return <div className={`playing-card card-placeholder ${small ? 'card-small' : ''}`} aria-hidden="true"><Spade size={24} strokeWidth={1} /></div>;
-  if (!card) return <div role="img" className={`playing-card card-back ${small ? 'card-small' : ''}`} aria-label="Face-down card"><Spade size={small ? 16 : 28} strokeWidth={1.25} /></div>;
+  if (placeholder) return <div data-motion-card={motionKey} className={`playing-card card-placeholder ${small ? 'card-small' : ''}`} aria-hidden="true"><Spade size={24} strokeWidth={1} /></div>;
+  if (!card) return <div data-motion-card={motionKey} role="img" className={`playing-card card-back ${small ? 'card-small' : ''}`} aria-label="Face-down card"><Spade size={small ? 16 : 28} strokeWidth={1.25} /></div>;
   const red = card[1] === 'h' || card[1] === 'd';
   const rank = card[0] === 'T' ? '10' : card[0];
   const rankName = rankNames[card[0]!] ?? rank;
-  return <div role="img" className={`playing-card card-face ${red ? 'red-suit' : 'black-suit'} ${small ? 'card-small' : ''}`}
+  return <div data-motion-card={motionKey} role="img" className={`playing-card card-face ${red ? 'red-suit' : 'black-suit'} ${small ? 'card-small' : ''}`}
     aria-label={`${rankName} of ${suitNames[card[1]!]}`} style={{ '--delay': `${index * 65}ms` } as CSSProperties}>
     <div className="card-corner"><strong>{rank}</strong><span>{suits[card[1]!]}</span></div>
     <span className="card-suit">{suits[card[1]!]}</span>
@@ -88,9 +89,9 @@ export function ruleSummary(rules: HandRules, legacyIndian = false): string {
   return `No limit · ${rules.sevenDeuceBounty ? `${chips(rules.sevenDeuceBounty)} per opponent for 7/2` : '7/2 bounty off'} · ${runs}`;
 }
 
-export function CommunityBoards({ hand, small = false, complete = false }: {
+export function CommunityBoards({ hand, small = false, complete = false, motion = false, onRunChange }: {
   hand: Pick<Hand, 'id' | 'boards' | 'runoutBoards'> & Partial<Pick<Hand, 'runoutVote'>>;
-  small?: boolean; complete?: boolean;
+  small?: boolean; complete?: boolean; motion?: boolean; onRunChange?: () => void;
 }) {
   const id = useId();
   const [selection, setSelection] = useState({ handId: hand.id, run: 0 });
@@ -102,13 +103,14 @@ export function CommunityBoards({ hand, small = false, complete = false }: {
     {runs.length > 1 && <div className="run-tabs" role="tablist" aria-label="Board runs">
       {runs.map((_, index) => <button key={index} type="button" role="tab" id={`${id}-tab-${index}`}
         aria-selected={selected === index} aria-controls={`${id}-panel`} tabIndex={selected === index ? 0 : -1}
-        onClick={() => setSelection({ handId: hand.id, run: index })}
+        onClick={() => { onRunChange?.(); setSelection({ handId: hand.id, run: index }); }}
         onKeyDown={event => {
           const next = event.key === 'ArrowRight' ? (index + 1) % runs.length
             : event.key === 'ArrowLeft' ? (index + runs.length - 1) % runs.length
               : event.key === 'Home' ? 0 : event.key === 'End' ? runs.length - 1 : null;
           if (next === null) return;
           event.preventDefault();
+          onRunChange?.();
           setSelection({ handId: hand.id, run: next });
           document.getElementById(`${id}-tab-${next}`)?.focus();
         }}>Run {index + 1}</button>)}
@@ -121,7 +123,8 @@ export function CommunityBoards({ hand, small = false, complete = false }: {
         {complete && !cards.length ? <span className="empty-board">Won without community cards</span>
           : <div className="board-cards">{Array.from({ length: 5 }, (_, index) => <PlayingCard
             key={`${hand.id}:${selected}:${boardIndex}:${cards[index] ?? index}`}
-            card={cards[index]} placeholder={!cards[index]} small={small} index={index} />)}</div>}
+            card={cards[index]} placeholder={!cards[index]} small={small} index={index}
+            motionKey={motion ? boardCardKey(selected, boardIndex, index) : undefined} />)}</div>}
       </div>)}
     </div>
   </div>;

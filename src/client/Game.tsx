@@ -7,6 +7,7 @@ import { PokerTable } from './Table';
 import { Records } from './Records';
 import { EmojiPicker } from './EmojiPicker';
 import { useCountdown } from './clock';
+import { useMotionPreference } from './motionPreference';
 import { GAME_LABELS, chips, handAnte, handGameLabel, isLegacyIndianHand, money, presetRaise, type Command, type GameVariant, type HandRules, type Identity, type RoomView, type RunoutCount } from '../shared/model';
 
 export function Game({ initialRoom, user, onHome, onSessionExpired }: {
@@ -28,6 +29,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const [hostTarget, setHostTarget] = useState('');
   const [copied, setCopied] = useState(false);
   const [sound, setSound] = useState(false);
+  const motion = useMotionPreference();
   const sending = useRef(false);
   const expired = useRef(onSessionExpired);
   expired.current = onSessionExpired;
@@ -170,6 +172,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
         <div className="table-title-actions"><button className="button button-small button-outline" onClick={() => { setCopied(false); setModal('invite'); }}><Users size={15} /> Invite friends</button>
           {isHost && open && <button className="button button-small button-outline" aria-label="House rules" onClick={() => { setDraftSettings({ ...room.settings, ...room.pendingBlinds }); setModal('settings'); }}><Settings2 size={16} /><span className="label-hide-mobile">House rules</span></button>}</div></div>
       {errorBanner}
+      {motion.error && <div className="error-banner" role="alert">{motion.error}</div>}
       {!connected && <div className="connection-banner"><WifiOff size={15} /> Reconnecting to the table. Your chips are saved; actions are locked until the live connection returns.</div>}
       {room.endAfterHand && <div className="info-banner">This is the final hand. All stacks will be cashed out when it finishes.</div>}
       {ownRequest && <div className="info-banner"><HandCoins size={16} /> {chips(ownRequest.amount)} chips {ownRequest.status === 'approved' ? 'approved; they will arrive after this hand.' : 'requested. Waiting for host approval.'}</div>}
@@ -179,7 +182,8 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
             ? <span>{displayedRules.game === 'omaha_bomb' ? 'Bomb ante' : 'Ante'} <b>{chips(displayedAnte)}</b> / No blinds</span>
             : <span>Blinds <b>{chips(room.settings.smallBlind)} / {chips(room.settings.bigBlind)}</b>{displayedAnte > 0 && <> <span className="middot">/</span> Ante {chips(displayedAnte)}</>}</span>}
           <span>Hand <b>#{room.handNumber.toString().padStart(3, '0')}</b></span></div>
-        <PokerTable room={room} timeOffset={timeOffset} onChooseEmoji={open ? openEmoji : undefined} emojiDisabled={disable} />
+        <PokerTable room={room} timeOffset={timeOffset} onChooseEmoji={open ? openEmoji : undefined} emojiDisabled={disable}
+          live={connected} animations={motion.enabled} />
         <div className={`action-console ${legal.canAct && !runoutVote ? 'your-turn' : ''}`}>
           <div className="action-heading"><span className={`turn-heading ${legal.canAct && !runoutVote ? 'positive' : ''}`}>{!open ? 'SESSION COMPLETE' : runoutVote ? 'RUNOUT CONSENT' : room.paused ? 'THE TABLE IS PAUSED' : legal.canAct ? 'YOUR MOVE' : activeHand ? `WAITING FOR ${room.players.find(player => player.id === hand.actorId)?.name.toUpperCase() ?? 'THE TABLE'}` : 'BETWEEN HANDS'}</span>
             <span className="muted">{!open ? 'Your final results are in the ledger.' : runoutVote ? room.paused ? 'Decision paused; submitted choices are saved.' : 'Betting is over. Decide before the cards run out.'
@@ -218,6 +222,11 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
         </div>
         {hand?.bounty && <BountyNotice bounty={hand.bounty} room={room} />}
         <div className="table-footer"><span><ShieldCheck size={13} /> Server-dealt. Privately held. Every chip recorded.</span><div>
+          <label className="motion-preference">Animations <select aria-label="Table animations" value={motion.setting}
+            onChange={event => {
+              const value = event.currentTarget.value;
+              if (value === 'system' || value === 'on' || value === 'off') motion.change(value);
+            }}><option value="system">Follow system</option><option value="on">On</option><option value="off">Off</option></select></label>
           {open && hero.seat !== null && <button className="text-button" disabled={disable} onClick={() => void command({ type: 'sit_out', value: !hero.sittingOut })}>{hero.sittingOut ? <Play size={14} /> : <Pause size={14} />}{hero.sittingOut ? 'Sit back in' : 'Sit out'}</button>}
           {isHost && open && <button className="text-button" disabled={disable} onClick={() => void command({ type: 'pause', value: !room.paused })}>{room.paused ? 'Resume table' : 'Pause table'}</button>}</div></div>
         <NextHandPanel room={room} disabled={disable} error={error} save={async rules => {
