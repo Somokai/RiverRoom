@@ -8,7 +8,7 @@ import { positionWagers } from './wagerLayout';
 interface MotionBatch { id: number; handId: string; plan: TableMotionPlan }
 interface Point { x: number; y: number }
 
-export function useTableAnimations(room: RoomView, live: boolean, enabled: boolean) {
+export function useTableAnimations(room: RoomView, live: boolean, enabled: boolean, decorations = '') {
   const surface = useRef<HTMLDivElement>(null);
   const previous = useRef<{ room: RoomView; watching: boolean } | null>(null);
   const [batch, setBatch] = useState<MotionBatch | null>(null);
@@ -26,8 +26,9 @@ export function useTableAnimations(room: RoomView, live: boolean, enabled: boole
       before.room.players.some(player => player.seat !== room.players.find(next => next.id === player.id)?.seat)) cancel();
   }, [room, live, enabled, cancel]);
   useLayoutEffect(() => {
-    if (surface.current) positionWagers(surface.current);
-  }, [room, batch, collected]);
+    // New emote bubbles can move resting piles, but not a flight's destination.
+    if (!batch && surface.current) positionWagers(surface.current);
+  }, [room, batch, collected, decorations]);
 
   useEffect(() => {
     let frame: number | undefined;

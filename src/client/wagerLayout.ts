@@ -9,7 +9,7 @@ export function positionWagers(table: HTMLElement) {
   if (!pot) return;
   const bounds = table.getBoundingClientRect();
   const middle = center(pot.getBoundingClientRect());
-  const obstacles = [...table.querySelectorAll<HTMLElement>('.seat-panel, .seat-cards, .seat-cards .playing-card, .seat-avatar-wrap, .community, [data-motion-deck]')]
+  const obstacles = [...table.querySelectorAll<HTMLElement>('.seat-panel, .seat-cards, .seat-cards .playing-card, .seat-avatar-wrap, .seat-emote-bubble, .community, [data-motion-deck]')]
     .map(element => element.getBoundingClientRect());
   const seats = [...table.querySelectorAll<HTMLElement>('.seat')].flatMap(seat => {
     const wager = seat.querySelector<HTMLElement>('[data-motion-wager]');

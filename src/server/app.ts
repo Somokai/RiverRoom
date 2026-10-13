@@ -8,10 +8,11 @@ import { rateLimit } from 'express-rate-limit';
 import { Server } from 'socket.io';
 import { z } from 'zod';
 import type { Identity, Room, RoomView } from '../shared/model.js';
+import { EMOTE_COOLDOWN_MS, type EmoteRequest, type EmoteResult, type TableEmote } from '../shared/emotes.js';
 import { GameError, roomView } from './engine.js';
 import { Store } from './store.js';
 import { chooseBotAction } from './bot.js';
-import { commandEnvelope, createSchema, displayName } from './validation.js';
+import { commandEnvelope, createSchema, displayName, emoteSchema } from './validation.js';
 
 export interface AppConfig {
   origin: string;
@@ -22,8 +23,16 @@ export interface AppConfig {
   staticDirectory?: string;
 }
 interface SocketData { user: Identity; roomId?: string; token: string }
-interface ClientEvents { subscribe: (roomId: string, ack: (result: { ok: boolean; error?: string }) => void) => void }
-interface ServerEvents { room: (room: RoomView) => void; server_error: (message: string) => void }
+interface ClientEvents {
+  subscribe: (roomId: string, ack: (result: { ok: boolean; error?: string }) => void) => void;
+  emote: (request: EmoteRequest, ack: (result: EmoteResult) => void) => void;
+}
+interface ServerEvents {
+  room: (room: RoomView) => void;
+  server_error: (message: string) => void;
+  emote: (event: TableEmote) => void;
+}
+interface EmoteGate { pending: boolean; nextAt: number; windowUntil: number; attempts: number }
 type AuthRequest = Request & { identity?: Identity; sessionToken?: string };
 
 function constantEqual(left: string, right: string): boolean {
@@ -105,25 +114,102 @@ export async function makeApp(store: Store, config: AppConfig) {
       io.to(roomId).emit('server_error', 'The table update could not be delivered. Reconnecting will restore the saved state.');
     });
   }
+  let closing = false;
+  const emoteGates = new Map<string, EmoteGate>();
+  const emoteTasks = new Set<Promise<EmoteResult>>();
+  const emoteTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, gate] of emoteGates)
+      if (!gate.pending && gate.nextAt <= now && gate.windowUntil <= now) emoteGates.delete(key);
+  }, EMOTE_COOLDOWN_MS);
+  emoteTimer.unref();
   io.on('connection', socket => {
     void socket.join(`user:${socket.data.user.id}`);
     let subscriptions = 0;
     socket.on('subscribe', async (roomId, ack) => {
       const respond = typeof ack === 'function' ? ack : () => {};
       try {
-        if (++subscriptions > 120 || typeof roomId !== 'string' || roomId.length > 80) throw new GameError('Too many subscription requests.');
+        const subscription = ++subscriptions;
+        const requireCurrent = () => {
+          if (!socket.connected || closing || subscription !== subscriptions) throw new GameError('Your table subscription changed. Try again.');
+        };
+        if (subscriptions > 120 || typeof roomId !== 'string' || roomId.length > 80) throw new GameError('Too many subscription requests.');
         const user = await store.identity(socket.data.token);
+        requireCurrent();
         if (!user) throw new GameError('Session expired.', 401);
         const room = await store.getRoom(roomId);
+        requireCurrent();
         store.requireMember(room, user.id);
         const old = socket.data.roomId;
         if (old) await socket.leave(old);
+        requireCurrent();
         socket.data.roomId = room.id;
         await socket.join(room.id);
+        requireCurrent();
         if (old && old !== room.id) safelyBroadcast(old);
         await broadcast(room.id);
+        requireCurrent();
         respond({ ok: true });
       } catch (error) { respond({ ok: false, error: error instanceof GameError ? error.message : 'Unable to subscribe to this table.' }); }
+    });
+    async function sendEmote(request: unknown): Promise<EmoteResult> {
+      let gate: EmoteGate | undefined;
+      try {
+        const parsed = emoteSchema.safeParse(request);
+        if (!parsed.success) throw new GameError('Choose a valid table emote.');
+        const { roomId, emote } = parsed.data;
+        const subscription = subscriptions;
+        const requireCurrent = () => {
+          if (closing || !socket.connected || subscription !== subscriptions ||
+            socket.data.roomId !== roomId || !socket.rooms.has(roomId))
+            throw new GameError('Subscribe to this table before sending an emote.');
+        };
+        requireCurrent();
+        const now = Date.now();
+        const key = `${roomId}:${socket.data.user.id}`;
+        let candidate = emoteGates.get(key);
+        if (!candidate) {
+          if (emoteGates.size >= 10000) return { ok: false, error: 'Emotes are temporarily busy. Try again shortly.', retryAfterMs: EMOTE_COOLDOWN_MS };
+          candidate = { pending: false, nextAt: 0, windowUntil: now + EMOTE_COOLDOWN_MS, attempts: 0 };
+          emoteGates.set(key, candidate);
+        }
+        if (candidate.nextAt > now) return { ok: false, error: 'Please wait before sending another emote.', retryAfterMs: candidate.nextAt - now };
+        if (candidate.pending) return { ok: false, error: 'An emote is already being sent. Please wait.', retryAfterMs: 100 };
+        if (candidate.windowUntil <= now) { candidate.windowUntil = now + EMOTE_COOLDOWN_MS; candidate.attempts = 0; }
+        if (candidate.attempts >= 12) return { ok: false, error: 'Too many emote requests. Please wait.', retryAfterMs: candidate.windowUntil - now };
+        // Reserve before awaiting: tabs and reconnects share both the query budget and cooldown.
+        gate = candidate;
+        gate.pending = true;
+        gate.attempts++;
+        const user = await store.identity(socket.data.token);
+        requireCurrent();
+        if (!user || user.id !== socket.data.user.id || !constantEqual(user.csrf, socket.data.user.csrf))
+          throw new GameError('Session expired.', 401);
+        const room = await store.getRoom(roomId);
+        requireCurrent();
+        store.requireMember(room, user.id);
+        if (room.status !== 'open') throw new GameError('This table is closed.');
+        if (room.players.find(player => player.id === user.id)?.seat == null) throw new GameError('Take a seat before sending an emote.');
+        const event: TableEmote = { id: randomUUID(), roomId: room.id, playerId: user.id, emote, at: Date.now() };
+        gate.nextAt = event.at + EMOTE_COOLDOWN_MS;
+        io.to(room.id).volatile.emit('emote', event);
+        return { ok: true, event };
+      } catch (error) {
+        if (error instanceof GameError) return { ok: false, error: error.message };
+        const requestId = randomUUID();
+        console.error(JSON.stringify({ event: 'emote_error', requestId, message: 'Unable to send table emote.' }));
+        return { ok: false, error: `Unable to send this emote. Please try again. Reference: ${requestId}` };
+      } finally {
+        if (gate) gate.pending = false;
+      }
+    }
+    socket.on('emote', (request, ack) => {
+      const task = sendEmote(request);
+      emoteTasks.add(task);
+      void task.then(result => {
+        emoteTasks.delete(task);
+        if (typeof ack === 'function') ack(result);
+      });
     });
     socket.on('disconnect', () => { if (socket.data.roomId) safelyBroadcast(socket.data.roomId); });
   });
@@ -242,7 +328,6 @@ export async function makeApp(store: Store, config: AppConfig) {
   });
 
   let ticking: Promise<void> | null = null;
-  let closing = false;
   let closed: Promise<void> | null = null;
   const runTick = async () => {
     try {
@@ -287,10 +372,12 @@ export async function makeApp(store: Store, config: AppConfig) {
       if (closed) return closed;
       closing = true;
       if (timer) clearInterval(timer);
+      clearInterval(emoteTimer);
       closed = Promise.all([
         ticking,
+        ...emoteTasks,
         new Promise<void>(resolve => io.close(() => resolve())),
-      ]).then(() => {});
+      ]).then(() => { emoteGates.clear(); });
       return closed;
     },
   };

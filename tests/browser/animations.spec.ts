@@ -196,6 +196,49 @@ test('raises and reraises build seat piles, then the closing call collects them 
   } finally { await guestContext.close(); }
 });
 
+test('emotes and mute controls coexist with live animation, wager piles and per-browser motion settings', async ({ page, browser, baseURL }) => {
+  const { room, guest, guestContext, command } = await setup(page, browser, baseURL!);
+  const say = async (client: Page, phrase: string) => {
+    await client.getByRole('button', { name: 'Open emote menu', exact: true }).click();
+    await client.getByRole('menuitem', { name: phrase, exact: true }).click();
+    await expect(client.getByRole('menu')).toHaveCount(0);
+  };
+  try {
+    await page.getByRole('button', { name: 'Deal first hand' }).click();
+    await expect(page.locator('.moving-card')).toHaveCount(4);
+    const version = (await current(page, baseURL!, room.id)).version;
+    await page.locator('.table-stage').evaluate(table => table.getAnimations({ subtree: true }).forEach(animation => animation.pause()));
+    await say(page, 'Hello');
+    await expect(guest.getByRole('status', { name: 'Motion host says Hello', exact: true })).toBeVisible();
+    await expect(page.locator('.moving-card')).toHaveCount(4);
+    expect(await page.locator('.moving-card').first().evaluate(element => element.getAnimations()[0]?.playState)).toBe('paused');
+    expect((await current(page, baseURL!, room.id)).version).toBe(version);
+    await guest.getByRole('button', { name: "Motion host's emote options", exact: true }).click({ button: 'right' });
+    await guest.getByRole('menuitem', { name: 'Mute emotes', exact: true }).click();
+    await expect(guest.getByRole('status', { name: 'Motion host says Hello', exact: true })).toHaveCount(0);
+    await page.getByLabel('Table animations', { exact: true }).selectOption('off');
+    await finishMotion(page);
+    await say(guest, 'Nice hand!');
+    await expect(page.getByRole('status', { name: 'Motion guest says Nice hand!', exact: true })).toBeVisible();
+    await expect(page.locator('.table-motion-layer')).toHaveCount(0);
+    await page.getByLabel('Table animations', { exact: true }).selectOption('on');
+    await command(page, { type: 'act', action: 'raise', amount: 200 });
+    await expect(page.locator('.moving-chips[data-motion-kind="bet"]')).toHaveCount(1);
+    await finishMotion(page);
+    await expect(page.locator('.hero-seat .seat-bet')).toHaveAttribute('data-wager-amount', '200');
+    await expect(page.locator('.pot-display strong')).toHaveText('0');
+    await expect(page.getByRole('status', { name: 'Motion guest says Nice hand!', exact: true })).toBeVisible();
+    expect(await page.locator('.table-stage').evaluate(table => {
+      const bubbles = [...table.querySelectorAll('.seat-emote-bubble')].map(element => element.getBoundingClientRect());
+      return [...table.querySelectorAll('.seat-bet:not(.wager-empty)')].every(element => {
+        const wager = element.getBoundingClientRect();
+        return bubbles.every(bubble => Math.min(wager.right, bubble.right) <= Math.max(wager.left, bubble.left) ||
+          Math.min(wager.bottom, bubble.bottom) <= Math.max(wager.top, bubble.top));
+      });
+    })).toBe(true);
+  } finally { await guestContext.close(); }
+});
+
 test('community streets and multi-run showdowns animate only visible new cards', async ({ page, browser, baseURL }) => {
   const { guest, guestContext, command } = await setup(page, browser, baseURL!, 'holdem', 2);
   try {
