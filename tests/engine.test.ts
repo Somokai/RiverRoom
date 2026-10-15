@@ -4,7 +4,8 @@ import { makeDeck, evaluate, shuffleDeck } from '../src/server/cards';
 import { assertRoom, createRoom, legalActions, roomView, timeoutTurn, transition } from '../src/server/engine';
 import { verifyTransfers } from '../src/server/store';
 import { chooseBotAction } from '../src/server/bot';
-import { EMOJI_GROUPS, isPlayerEmoji } from '../src/shared/emoji';
+import { EMOJI_GROUPS, findPlayerEmoji, isPlayerEmoji } from '../src/shared/emoji';
+import { commandSchema } from '../src/server/validation';
 
 let now = 1800000000000;
 function apply(room: Room, actor: string, command: Command, deck?: string[]) {
@@ -97,8 +98,28 @@ test('reused display formatters preserve chip and currency output', () => {
 describe('per-table player emojis', () => {
   test('the picker has distinct, named choices accepted by the server', () => {
     const choices = EMOJI_GROUPS.flatMap(group => group.choices);
+    expect(choices.length).toBeGreaterThanOrEqual(200);
+    expect(new Set(EMOJI_GROUPS.map(group => group.name)).size).toBe(EMOJI_GROUPS.length);
     expect(new Set(choices.map(choice => choice.value)).size).toBe(choices.length);
+    expect(new Set(choices.map(choice => choice.label)).size).toBe(choices.length);
     expect(choices.every(choice => choice.label && choice.keywords && choice.value.length <= 16 && isPlayerEmoji(choice.value))).toBe(true);
+  });
+
+  test('every catalog option passes command validation and projects without changing poker state or accounting', () => {
+    let room = start(table());
+    const hand = structuredClone(room.hand);
+    const accounts = room.players.map(player => [player.stack, player.buyIns, player.cashOuts, player.bountyNet]);
+    for (const choice of EMOJI_GROUPS.flatMap(group => group.choices)) {
+      const command = commandSchema.parse({ type: 'emoji', emoji: choice.value });
+      const result = transition(room, 'p1', command, { now: ++now });
+      verifyTransfers(room, result.room, result.transfers);
+      expect(result.transfers).toEqual([]);
+      expect(result.room.hand).toEqual(hand);
+      expect(result.room.players.map(player => [player.stack, player.buyIns, player.cashOuts, player.bountyNet])).toEqual(accounts);
+      expect(findPlayerEmoji(choice.value)).toEqual(choice);
+      expect(roomView(result.room, 'p0', new Set()).players[1]!.emoji).toBe(choice.value);
+      room = result.room;
+    }
   });
 
   test('each player changes only their emoji without changing an active hand or its accounts', () => {
