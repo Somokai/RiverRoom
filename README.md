@@ -233,6 +233,31 @@ them outside the app. Bot-related amounts remain virtual.
 ### Included
 
 - Two to nine seats, live presence, reconnect, invite links, table chat.
+- Live table animations: cards travel from the deck to each seat in deal order;
+  new community cards are dealt and newly public hole cards turn face up.
+  Bets, calls, raises and blinds build a separate chip pile in front of each
+  player. Those piles sweep into the middle only when the street's betting is
+  finished; antes go directly into the collected pot. Uncalled chips return
+  to their owner, and payouts travel from the middle to
+  the winners, including split/side-pot awards. The center shows the collected
+  pot separately from the total including live wagers. This distinction
+  remains when animations are off; server betting limits use the full pot.
+  Animations use only the player's redacted view; balances, legal actions and
+  turn clocks update immediately rather than waiting for the visuals.
+  **Animations** below the table offers **Follow system**, **On**, and **Off**,
+  saved in this browser. Follow system respects reduced motion. Resizing,
+  disconnecting, changing board-run tabs, or switching away cancels movement;
+  reconnects and missed updates show current state without replaying old hands.
+- Seat emotes: right-click your name (or use its speech-bubble button) to say
+  **Hello**, **Nice hand!**, **Sorry...**, or **Well played**. Emotes appear above
+  the sender's seat for four seconds, with a server-enforced three-second
+  cooldown. They work during play or while paused and never alter a hand,
+  table version, ledger, or journal. Old emotes are not replayed on reconnect.
+  Right-click another player's seat name to **Mute emotes** or **Unmute emotes**.
+  This affects only your view; preferences stay in this browser, per profile and
+  table, and do not mute chat. Keyboard users can focus a seat name and press
+  Shift+F10, then use arrow keys and Enter; Escape dismisses the menu. Tapping
+  another player's seat name also opens its mute menu.
 - Per-table player emojis: click your name at your seat or the smiley/profile
   control in the table header to search or browse the emoji picker. Choose or
   remove an emoji at any time while the session is open, including during a
@@ -265,6 +290,12 @@ them outside the app. Bot-related amounts remain virtual.
 - Full transfer ledger, hand history, full action journal, CSV and JSON downloads.
 - Responsive desktop/mobile table, reduced-motion support, native accessible
   dialogs, optional turn sounds, and no externally hosted images or fonts.
+  Turn sounds start muted on each table visit. Enable them with the speaker
+  button; enabling during your turn also pings. Each actionable turn pings once,
+  with audio recovery after browser interruptions. If playback is blocked,
+  return to the table and tap or press a key; a failed audio request displays
+  an error and lets you enable sounds again. Browser/OS muting or a suspended
+  background page can still prevent an audible alert.
 
 There is **no rake, payment collection, money transfer, public matchmaking,
 real-money gaming certification, tournament elimination, or blind-level timer**.

@@ -68,6 +68,187 @@ async function checkAction(page: Page, roomId: string) {
   await expect.poll(async () => (await getRoom(page, roomId)).version).toBeGreaterThan(view.version);
 }
 
+interface TurnAudioProbe {
+  pings: number;
+  resumes: number;
+  blocked: boolean;
+  rejectNext: boolean;
+  suspend: () => void;
+  release: () => void;
+}
+declare global {
+  interface Window {
+    turnAudio: TurnAudioProbe;
+    turnAudioContext: AudioContext;
+    turnAudioPings: number;
+  }
+}
+
+test('turn sounds enable mid-turn, recover suspended audio, and never replay stale or duplicate turns', async ({ page, browser }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    const probe: TurnAudioProbe = {
+      pings: 0, resumes: 0, blocked: false, rejectNext: false, suspend: () => {}, release: () => {},
+    };
+    Object.defineProperty(window, 'turnAudio', { value: probe });
+    Object.defineProperty(window, 'AudioContext', { value: class {
+      state = 'suspended';
+      currentTime = 0;
+      destination = {};
+      onstatechange: (() => void) | null = null;
+      pending: (() => void)[] = [];
+      constructor() {
+        probe.suspend = () => { this.state = 'suspended'; this.onstatechange?.(); };
+        probe.release = () => {
+          probe.blocked = false;
+          this.state = 'running'; this.onstatechange?.();
+          for (const resolve of this.pending.splice(0)) resolve();
+        };
+      }
+      resume() {
+        probe.resumes++;
+        if (probe.rejectNext) {
+          probe.rejectNext = false;
+          return Promise.reject(new Error('Audio blocked'));
+        }
+        if (probe.blocked) return new Promise<void>(resolve => this.pending.push(resolve));
+        this.state = 'running'; this.onstatechange?.();
+        return Promise.resolve();
+      }
+      close() { this.state = 'closed'; return Promise.resolve(); }
+      createOscillator() {
+        const context = this;
+        return {
+          frequency: { value: 0 }, onended: null as (() => void) | null,
+          connect() {}, disconnect() {},
+          start() {
+            if (context.state !== 'running') throw new Error('Scheduled while audio was suspended');
+            probe.pings++;
+          },
+          stop() { queueMicrotask(() => this.onended?.()); },
+        };
+      }
+      createGain() {
+        return { connect() {}, disconnect() {}, gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} } };
+      }
+    } });
+  });
+  const pings = () => page.evaluate(() => window.turnAudio.pings);
+  const initial = await createTable(page, 'Turn sound table', 2);
+  const guestContext = await browser.newContext();
+  const guest = await guestContext.newPage();
+  try {
+    await guestJoin(guest, initial.code, 'Leo');
+    await buyIn(guest);
+    await page.getByRole('button', { name: 'Approve Leo' }).click();
+    await expect(guest.locator('.bankroll-main strong').first()).toContainText('10,000');
+    await page.getByRole('button', { name: 'Deal first hand' }).click();
+    await expect(page.locator('.turn-heading')).toHaveText('YOUR MOVE');
+    expect(await pings()).toBe(0);
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    await expect.poll(pings).toBe(1);
+    await serverCommand(page, initial.id, { type: 'chat', message: 'Same turn, new snapshot' });
+    await page.getByRole('button', { name: 'Mute turn sounds' }).click();
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    expect(await pings()).toBe(1);
+
+    await checkAction(page, initial.id);
+    await checkAction(guest, initial.id);
+    await page.evaluate(() => window.turnAudio.suspend());
+    await checkAction(guest, initial.id);
+    await expect.poll(pings).toBe(2);
+    expect(await page.evaluate(() => window.turnAudio.resumes)).toBeGreaterThan(2);
+
+    await checkAction(page, initial.id);
+    await page.evaluate(() => {
+      const probe = window.turnAudio;
+      probe.suspend(); probe.blocked = true;
+    });
+    await checkAction(guest, initial.id);
+    await expect(page.locator('.turn-heading')).toHaveText('YOUR MOVE');
+    expect(await pings()).toBe(2);
+    await serverCommand(page, initial.id, { type: 'act', action: 'check' });
+    await expect(page.locator('.turn-heading')).not.toHaveText('YOUR MOVE');
+    await page.evaluate(() => window.turnAudio.release());
+    expect(await pings()).toBe(2);
+    await checkAction(guest, initial.id);
+    await expect.poll(pings).toBe(3);
+
+    await page.getByRole('button', { name: 'Mute turn sounds' }).click();
+    await page.evaluate(() => { window.turnAudio.rejectNext = true; });
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    await expect(page.getByRole('alert')).toContainText('Your browser could not enable sound');
+    await expect(page.getByRole('button', { name: 'Enable turn sounds' })).toBeVisible();
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    await expect(page.getByRole('button', { name: 'Mute turn sounds' })).toBeVisible();
+    expect(await pings()).toBe(3);
+
+    await checkAction(page, initial.id);
+    await serverCommand(page, initial.id, { type: 'deal' });
+    await page.evaluate(() => { window.turnAudio.suspend(); window.turnAudio.blocked = true; });
+    await checkAction(guest, initial.id);
+    await expect(page.locator('.turn-heading')).toHaveText('YOUR MOVE');
+    expect(await pings()).toBe(3);
+    await page.getByRole('button', { name: 'Mute turn sounds' }).click();
+    await page.evaluate(() => window.turnAudio.release());
+    expect(await pings()).toBe(3);
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    await expect.poll(pings).toBe(4);
+
+    await page.evaluate(() => {
+      window.turnAudio.suspend();
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(await pings()).toBe(4);
+    await checkAction(page, initial.id);
+    await expect.poll(pings).toBe(5);
+    expect(errors).toEqual([]);
+  } finally { await guestContext.close(); }
+});
+
+test('turn sounds resume a real Chromium audio context before scheduling the next ping', async ({ page, browser }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    const NativeAudioContext = window.AudioContext;
+    window.turnAudioPings = 0;
+    window.AudioContext = class extends NativeAudioContext {
+      constructor() { super(); window.turnAudioContext = this; }
+      override createOscillator() {
+        const oscillator = super.createOscillator();
+        const start = oscillator.start.bind(oscillator);
+        oscillator.start = (when?: number) => {
+          if (this.state !== 'running') throw new Error('Turn ping scheduled before audio resumed');
+          start(when); window.turnAudioPings++;
+        };
+        return oscillator;
+      }
+    };
+  });
+  const pings = () => page.evaluate(() => window.turnAudioPings);
+  const initial = await createTable(page, 'Native turn sound table', 2);
+  const guestContext = await browser.newContext();
+  const guest = await guestContext.newPage();
+  try {
+    await guestJoin(guest, initial.code, 'Leo');
+    await buyIn(guest);
+    await page.getByRole('button', { name: 'Approve Leo' }).click();
+    await expect(guest.locator('.bankroll-main strong').first()).toContainText('10,000');
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    await expect.poll(() => page.evaluate(() => window.turnAudioContext.state)).toBe('running');
+    await page.getByRole('button', { name: 'Deal first hand' }).click();
+    await expect.poll(pings).toBe(1);
+    await checkAction(page, initial.id);
+    await checkAction(guest, initial.id);
+    await page.evaluate(() => window.turnAudioContext.suspend());
+    await checkAction(guest, initial.id);
+    await expect.poll(pings).toBe(2);
+    await expect.poll(() => page.evaluate(() => window.turnAudioContext.state)).toBe('running');
+    expect(errors).toEqual([]);
+  } finally { await guestContext.close(); }
+});
+
 test('private advanced stats use real completed hands, stay personal, and work in the lobby and on mobile', async ({ page, browser }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -500,6 +681,189 @@ test('desktop and phone layouts expose real controls without horizontal overflow
     await expect(page.getByLabel('Small blind')).toBeVisible();
     await page.getByRole('button', { name: 'Close dialog' }).click();
   } finally { for (const context of contexts) await context.close(); }
+});
+
+test('seat emotes float live, expire, and respect browser-local per-table mutes', async ({ page, browser }, testInfo) => {
+  const initial = await createTable(page, 'Emote table', 2);
+  const guestContext = await browser.newContext();
+  const guestPage = await guestContext.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  guestPage.on('pageerror', error => errors.push(error.message));
+  const menu = page.getByRole('menu', { name: 'Your emotes', exact: true });
+  const ownName = page.getByRole('button', { name: 'Change your table emoji', exact: true });
+  async function say(other: Page, phrase: string) {
+    await other.getByRole('button', { name: 'Open emote menu', exact: true }).click();
+    const choice = other.getByRole('menuitem', { name: phrase, exact: true });
+    await expect(choice).toBeEnabled();
+    await choice.click();
+    await expect(other.getByRole('menu')).toHaveCount(0);
+  }
+  try {
+    await guestJoin(guestPage, initial.code, 'Leo');
+    await buyIn(guestPage);
+    await page.getByRole('button', { name: 'Approve Leo' }).click();
+    await expect(guestPage.locator('.bankroll-main strong').first()).toContainText('10,000');
+    await page.getByRole('button', { name: 'Deal first hand' }).click();
+    await serverCommand(page, initial.id, { type: 'pause', value: true });
+    await expect(page.locator('.paused-overlay')).toBeVisible();
+    const before = await getRoom(page, initial.id);
+    const auditBefore = await (await page.request.get(`/api/rooms/${initial.id}/audit`)).json();
+    const ledgerBefore = await (await page.request.get(`/api/rooms/${initial.id}/ledger`)).json();
+
+    await ownName.click({ button: 'right' });
+    await expect(menu.getByRole('menuitem')).toHaveText(['Hello', 'Nice hand!', 'Sorry...', 'Well played']);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath('emote-menu-desktop.png'), animations: 'disabled' });
+    await menu.getByRole('menuitem', { name: 'Hello', exact: true }).click();
+    await expect(menu).toHaveCount(0);
+    await expect(page.getByRole('status', { name: 'Maya says Hello', exact: true })).toBeVisible();
+    await expect(guestPage.getByRole('status', { name: 'Maya says Hello', exact: true })).toBeVisible();
+    await ownName.click({ button: 'right' });
+    await expect(menu.getByRole('menuitem', { name: 'Hello', exact: true })).toBeDisabled();
+    await expect(menu.getByRole('status')).toContainText('Next emote in');
+    await page.keyboard.press('Escape');
+    const after = await getRoom(page, initial.id);
+    expect(after.version).toBe(before.version);
+    expect(after.hand).toEqual(before.hand);
+    expect(after.events).toEqual(before.events);
+    expect(await (await page.request.get(`/api/rooms/${initial.id}/audit`)).json()).toEqual(auditBefore);
+    expect(await (await page.request.get(`/api/rooms/${initial.id}/ledger`)).json()).toEqual(ledgerBefore);
+    await expect(guestPage.getByRole('status', { name: 'Maya says Hello', exact: true })).toHaveCount(0, { timeout: 5500 });
+
+    await say(guestPage, 'Nice hand!');
+    await expect(page.getByRole('status', { name: 'Leo says Nice hand!', exact: true })).toBeVisible();
+    const opponent = page.getByRole('button', { name: "Leo's emote options", exact: true });
+    const sameBrowserTab = await page.context().newPage();
+    await sameBrowserTab.goto(`/?table=${initial.id}`);
+    await expect(sameBrowserTab.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+    await opponent.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Mute emotes', exact: true }).click();
+    await expect(page.getByRole('status', { name: 'Leo says Nice hand!', exact: true })).toHaveCount(0);
+    await sameBrowserTab.getByRole('button', { name: "Leo's emote options", exact: true }).click({ button: 'right' });
+    await expect(sameBrowserTab.getByRole('menuitem', { name: 'Unmute emotes', exact: true })).toBeVisible();
+    await sameBrowserTab.close();
+    await page.reload();
+    await expect(page.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+    await opponent.click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Unmute emotes', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await say(guestPage, 'Sorry...');
+    await expect(guestPage.getByRole('status', { name: 'Leo says Sorry...', exact: true })).toBeVisible();
+    await expect(page.locator('.seat-emote-bubble')).toHaveCount(0);
+    await opponent.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Unmute emotes', exact: true }).click();
+    await expect(page.locator('.seat-emote-bubble')).toHaveCount(0);
+    await say(guestPage, 'Well played');
+    await expect(page.getByRole('status', { name: 'Leo says Well played', exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('seat-emote-bubble.png'), animations: 'disabled' });
+    await page.reload();
+    await expect(page.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+    await expect(page.locator('.seat-emote-bubble')).toHaveCount(0);
+
+    await opponent.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Mute emotes', exact: true }).click();
+    const second = await post(page, '/rooms', {
+      name: 'Separate emote table', settings: initial.settings, buyIn: 10000, commandId: crypto.randomUUID(),
+    });
+    await post(guestPage, '/rooms/join', { code: second.room.code, commandId: crypto.randomUUID() });
+    await page.goto(`/?table=${second.room.id}`);
+    await expect(page.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+    await opponent.click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Mute emotes', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.goto(`/?table=${initial.id}`);
+    await expect(page.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+    await opponent.click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Unmute emotes', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await serverCommand(guestPage, initial.id, { type: 'chat', message: 'Chat still works while emotes are muted.' });
+    await page.getByRole('button', { name: 'Table talk' }).click();
+    await expect(page.locator('.chat-message')).toContainText('Chat still works while emotes are muted.');
+    expect(errors).toEqual([]);
+  } finally { await guestContext.close(); }
+});
+
+test('seat emote menus support keyboard, small screens, dismissal and existing emoji clicks', async ({ page }, testInfo) => {
+  await createTable(page, 'Accessible emotes', 2);
+  const ownName = page.getByRole('button', { name: 'Change your table emoji', exact: true });
+  const menu = page.getByRole('menu', { name: 'Your emotes', exact: true });
+  await ownName.focus();
+  await ownName.press('Shift+F10');
+  await expect(menu.getByRole('menuitem', { name: 'Hello', exact: true })).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(menu.getByRole('menuitem', { name: 'Nice hand!', exact: true })).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(menu.getByRole('menuitem', { name: 'Well played', exact: true })).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(menu.getByRole('menuitem', { name: 'Hello', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(ownName).toBeFocused();
+  await ownName.click();
+  await expect(page.getByRole('dialog', { name: 'Choose your table emoji', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.getByRole('button', { name: 'Open emote menu', exact: true }).click();
+    await expect(menu).toBeVisible();
+    const bounds = await menu.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(844);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    if (width === 390) await page.screenshot({ path: testInfo.outputPath('emote-menu-mobile.png'), animations: 'disabled' });
+    await page.keyboard.press('Tab');
+    await expect(menu).toHaveCount(0);
+  }
+  await ownName.click({ button: 'right' });
+  await page.mouse.click(2, 2);
+  await expect(menu).toHaveCount(0);
+  await ownName.click({ button: 'right' });
+  await page.evaluate(() => scrollBy(0, 40));
+  await expect(menu).toHaveCount(0);
+  await page.context().setOffline(true);
+  await expect(page.locator('.connection-banner')).toBeVisible();
+  await page.getByRole('button', { name: 'Open emote menu', exact: true }).click();
+  await expect(menu.getByRole('menuitem', { name: 'Hello', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await page.context().setOffline(false);
+  await expect(page.locator('.connection-banner')).toHaveCount(0);
+  await expect(page.locator('.seat-emote-bubble')).toHaveCount(0);
+});
+
+test('seat emote mutes report unavailable or damaged browser storage without breaking the table', async ({ page }) => {
+  const room = await createTable(page, 'Emote storage', 2);
+  await serverCommand(page, room.id, { type: 'add_bot', name: 'Atlas' });
+  const identity = await getIdentity(page);
+  await page.evaluate(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith('river-room:emote-mutes:')) throw new DOMException('Storage unavailable', 'QuotaExceededError');
+      original.call(this, key, value);
+    };
+  });
+  const opponent = page.getByRole('button', { name: "Atlas's emote options", exact: true });
+  await opponent.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Mute emotes', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('could not be saved');
+  await opponent.click({ button: 'right' });
+  await expect(page.getByRole('menuitem', { name: 'Unmute emotes', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await expect(page.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+  await page.evaluate(key => localStorage.setItem(key, '{"broken":true}'), `river-room:emote-mutes:${identity.id}:${room.id}`);
+  await page.reload();
+  await expect(page.getByRole('alert')).toContainText('Saved emote mutes are invalid');
+  await opponent.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Mute emotes', exact: true }).click();
+  await page.reload();
+  await expect(page.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await opponent.click({ button: 'right' });
+  await expect(page.getByRole('menuitem', { name: 'Unmute emotes', exact: true })).toBeVisible();
 });
 
 test('practice bots play their own turns without private-card leaks', async ({ page }) => {

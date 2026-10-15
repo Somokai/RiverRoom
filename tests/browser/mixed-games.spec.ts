@@ -131,6 +131,7 @@ for (const game of ['holdem', 'omaha_bomb'] as const) {
           return player;
         });
         room.hand!.players = room.players.map(player => player.hand!);
+        room.hand!.pot = room.hand!.players.reduce((sum, player) => sum + player.committed, 0);
         room.hand!.street = 'flop';
         if (game === 'holdem') room.hand!.boards = [['2h', '3c', '4s']];
         room.hand!.board = room.hand!.boards[0]!;
@@ -141,6 +142,7 @@ for (const game of ['holdem', 'omaha_bomb'] as const) {
       const failures: string[] = [];
       for (const width of [1600, 1440, 1200, 1024, 980, 768, 600, 390, 320]) {
         await page.setViewportSize({ width, height: width > 600 ? 1000 : 844 });
+        await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
         const sizes = await table.locator('.seat-panel, .seat-name, .player-emoji, .seat-stack, .seat-avatar, .position-badge')
           .evaluateAll(elements => elements.map(element => {
             const rect = element.getBoundingClientRect();
@@ -163,7 +165,7 @@ for (const game of ['holdem', 'omaha_bomb'] as const) {
             viewport: innerWidth, scroll: document.documentElement.scrollWidth,
             panels: [...document.querySelectorAll('.seat-panel')].map(rectangle),
             cards: [...document.querySelectorAll('.seat')].map(seat => [...seat.querySelectorAll('.seat-cards .playing-card')].map(rectangle)),
-            bets: [...document.querySelectorAll('.seat-bet')].map(rectangle),
+            bets: [...document.querySelectorAll('.seat-bet:not(.wager-empty)')].map(rectangle),
             boards: [...document.querySelectorAll('.community .board-cards')].map(rectangle),
             metadata: rectangle(document.querySelector('.table-meta')!),
             actions: rectangle(document.querySelector('.action-console')!),
@@ -189,6 +191,14 @@ for (const game of ['holdem', 'omaha_bomb'] as const) {
         if (cards.some(card => card.top <= layout.metadata.bottom)) failures.push(`Hole cards overlap metadata at ${width}px`);
         if (cards.some(card => layout.boards.some(board => overlaps(card, board)))) failures.push(`Hole cards overlap board at ${width}px`);
         if (layout.bets.some(bet => bet.bottom >= layout.actions.top)) failures.push(`Bets overlap controls at ${width}px`);
+        for (const [index, bet] of layout.bets.entries()) {
+          if (bet.left < 0 || bet.right > width + 1) failures.push(`Wager ${index} outside viewport at ${width}px`);
+          if (layout.boards.some(board => overlaps(bet, board))) failures.push(`Wager ${index} overlaps board at ${width}px`);
+          const obstructedPanel = layout.panels.find(panel => overlaps(bet, panel));
+          if (obstructedPanel) failures.push(`Wager ${index} overlaps a player at ${width}px: ${JSON.stringify({ bet, panel: obstructedPanel })}`);
+          if (cards.some(card => overlaps(bet, card))) failures.push(`Wager ${index} overlaps cards at ${width}px`);
+          if (layout.bets.slice(index + 1).some(other => overlaps(bet, other))) failures.push(`Wager piles overlap at ${width}px`);
+        }
         if (width === 1440 || width === 390)
           await table.screenshot({ path: testInfo.outputPath(`player-displays-${width}.png`), animations: 'disabled' });
       }

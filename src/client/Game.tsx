@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { io } from 'socket.io-client';
+import { io, type Socket } from 'socket.io-client';
 import { ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Bot, Check, CheckCheck, ChevronDown, Copy, Crown, Download, HandCoins, History, LoaderCircle, LockKeyhole, LogOut, MessageSquare, Pause, Play, Plus, ReceiptText, Send, Settings2, ShieldCheck, Smile, Users, Volume2, VolumeX, Wifi, WifiOff, X } from 'lucide-react';
 import { api, ApiError, getRoom, submit } from './api';
 import { BountyNotice, Brand, Modal, Numeric, PlayerName, bountyLabel, ruleSummary, runLabel, signedChips } from './ui';
@@ -8,6 +8,8 @@ import { Records } from './Records';
 import { PlayerStatsDialog } from './PlayerStats';
 import { EmojiPicker } from './EmojiPicker';
 import { useCountdown } from './clock';
+import { useMotionPreference } from './motionPreference';
+import { useEmotes } from './emotes';
 import { GAME_LABELS, chips, handAnte, handGameLabel, isLegacyIndianHand, money, presetRaise, type Command, type GameVariant, type HandRules, type Identity, type RoomView, type RunoutCount } from '../shared/model';
 
 export function Game({ initialRoom, user, onHome, onSessionExpired }: {
@@ -29,13 +31,19 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const [hostTarget, setHostTarget] = useState('');
   const [copied, setCopied] = useState(false);
   const [sound, setSound] = useState(false);
+  const motion = useMotionPreference();
   const sending = useRef(false);
   const expired = useRef(onSessionExpired);
   expired.current = onSessionExpired;
   const lastTurn = useRef('');
   const audio = useRef<AudioContext | null>(null);
+  const soundEnabled = useRef(false);
+  const currentTurn = useRef('');
   const chatEnd = useRef<HTMLDivElement>(null);
   const requestStates = useRef(new Map(initialRoom.requests.map(request => [request.id, request.status])));
+  const emoteSocket = useRef<Socket | null>(null);
+  const emotes = useEmotes(initialRoom.id, user.id, timeOffset, emoteSocket, setError);
+  const { receive: receiveEmote, clear: clearEmotes } = emotes;
   const acceptRoom = useCallback((next: RoomView) => {
     setRoom(previous => next.id !== previous.id || next.version >= previous.version ? next : previous);
     setTimeOffset(next.serverTime - Date.now());
@@ -50,6 +58,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   }, [initialRoom.id, acceptRoom]);
   useEffect(() => {
     const socket = io({ auth: { csrf: user.csrf }, reconnection: true, reconnectionDelay: 800, reconnectionDelayMax: 4000 });
+    emoteSocket.current = socket;
     socket.on('connect', () => {
       socket.emit('subscribe', initialRoom.id, (response: { ok: boolean; error?: string }) => {
         setConnected(response.ok);
@@ -57,7 +66,8 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
       });
     });
     socket.on('room', (next: RoomView) => acceptRoom(next));
-    socket.on('disconnect', () => setConnected(false));
+    socket.on('emote', receiveEmote);
+    socket.on('disconnect', () => { setConnected(false); clearEmotes(); });
     socket.on('connect_error', (reason: Error) => {
       setConnected(false);
       if (reason.message === 'Session expired.') expired.current();
@@ -66,8 +76,8 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
     const interval = setInterval(() => void refresh(), 15000);
     const visibility = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', visibility);
-    return () => { socket.disconnect(); clearInterval(interval); document.removeEventListener('visibilitychange', visibility); };
-  }, [initialRoom.id, user.csrf, acceptRoom, refresh]);
+    return () => { emoteSocket.current = null; socket.disconnect(); clearInterval(interval); document.removeEventListener('visibilitychange', visibility); };
+  }, [initialRoom.id, user.csrf, acceptRoom, refresh, receiveEmote, clearEmotes]);
   useEffect(() => { if (notice) { const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); } }, [notice]);
   useEffect(() => { chatEnd.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [room.events.length, room.events.at(-1)?.id, panel]);
   const hero = room.players.find(player => player.id === user.id)!;
@@ -79,6 +89,8 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const displayedAnte = handAnte(displayedRules, room.settings);
   const legacyIndian = !!hand && isLegacyIndianHand(hand);
   const legal = room.legal;
+  const turnKey = hand?.actorId === user.id && legal.canAct ? `${hand.id}:${hand.street}:${hand.turnStartedAt}` : '';
+  currentTurn.current = turnKey;
   const open = room.status === 'open';
   const pending = room.requests.filter(request => request.status === 'pending');
   const ownRequest = room.requests.find(request => request.playerId === user.id && ['pending', 'approved'].includes(request.status));
@@ -103,18 +115,49 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const canDeal = room.players.filter(player => player.seat !== null && !player.sittingOut && player.stack > 0).length >= 2;
   useEffect(() => { setAmount(Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, room.settings.bigBlind * 3))); },
     [hand?.id, hand?.street, hand?.currentBet, hero.stack, room.settings.bigBlind, legal.minRaiseTo, legal.maxRaiseTo]);
-  useEffect(() => {
-    const key = hand?.actorId === user.id && legal.canAct ? `${hand.id}:${hand.turnStartedAt}` : '';
-    if (key && lastTurn.current !== key && sound && audio.current) {
-      const oscillator = audio.current.createOscillator(); const gain = audio.current.createGain();
-      oscillator.connect(gain); gain.connect(audio.current.destination);
-      oscillator.frequency.value = 640; gain.gain.setValueAtTime(0.035, audio.current.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, audio.current.currentTime + 0.22);
-      oscillator.start(); oscillator.stop(audio.current.currentTime + 0.22);
+  const playTurnSound = useCallback(async () => {
+    const context = audio.current;
+    const key = currentTurn.current;
+    if (!soundEnabled.current || !context) return;
+    if (context.state === 'running' && (!key || lastTurn.current === key)) return;
+    try {
+      if (context.state !== 'running') await context.resume();
+      if (audio.current !== context || !soundEnabled.current || !key || currentTurn.current !== key ||
+        lastTurn.current === key || context.state !== 'running') return;
+      const oscillator = context.createOscillator(); const gain = context.createGain();
+      oscillator.connect(gain); gain.connect(context.destination);
+      oscillator.frequency.value = 640; gain.gain.setValueAtTime(0.035, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.22);
+      oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
+      oscillator.start(); oscillator.stop(context.currentTime + 0.22);
+      lastTurn.current = key;
+    } catch {
+      if (audio.current !== context || !soundEnabled.current || currentTurn.current !== key) return;
+      soundEnabled.current = false; setSound(false);
+      setError('Your browser could not play the turn sound. Tap Enable turn sounds to try again.');
     }
-    lastTurn.current = key;
-  }, [hand?.actorId, hand?.turnStartedAt, legal.canAct, sound, user.id]);
-  useEffect(() => () => { void audio.current?.close(); }, []);
+  }, []);
+  useEffect(() => { if (sound) void playTurnSound(); }, [turnKey, sound, playTurnSound]);
+  useEffect(() => {
+    const recover = () => {
+      if (audio.current?.state !== 'running') void playTurnSound();
+    };
+    const visible = () => { if (document.visibilityState === 'visible') void playTurnSound(); };
+    document.addEventListener('pointerdown', recover);
+    document.addEventListener('keydown', recover);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      document.removeEventListener('pointerdown', recover);
+      document.removeEventListener('keydown', recover);
+      document.removeEventListener('visibilitychange', visible);
+      const context = audio.current;
+      audio.current = null; soundEnabled.current = false;
+      if (context) {
+        context.onstatechange = null;
+        void context.close().catch(reason => console.error('Unable to close turn audio:', reason));
+      }
+    };
+  }, [playTurnSound]);
 
   async function command(value: Command): Promise<boolean> {
     if (sending.current) return false;
@@ -148,11 +191,23 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const disable = busy || !connected || !open;
   const openEmoji = useCallback(() => { setError(''); setModal('emoji'); }, []);
   function soundToggle() {
-    if (!sound) {
-      audio.current ??= new AudioContext();
-      void audio.current.resume().catch(() => setError('Your browser could not enable sound.'));
+    if (soundEnabled.current) {
+      soundEnabled.current = false; setSound(false);
+      return;
     }
-    setSound(!sound);
+    try {
+      const context = audio.current ??= new AudioContext();
+      context.onstatechange = () => { if (context.state === 'running') void playTurnSound(); };
+      soundEnabled.current = true; setSound(true);
+      void context.resume().then(() => playTurnSound()).catch(() => {
+        if (audio.current !== context || !soundEnabled.current) return;
+        soundEnabled.current = false; setSound(false);
+        setError('Your browser could not enable sound. Tap Enable turn sounds to try again.');
+      });
+    } catch {
+      soundEnabled.current = false; setSound(false);
+      setError('Your browser could not enable sound. Tap Enable turn sounds to try again.');
+    }
   }
   const cashValue = hero.stack * room.settings.chipValueCents;
   const errorBanner = error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={16} /></button></div>;
@@ -171,6 +226,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
         <div className="table-title-actions"><button className="button button-small button-outline" onClick={() => { setCopied(false); setModal('invite'); }}><Users size={15} /> Invite friends</button>
           {isHost && open && <button className="button button-small button-outline" aria-label="House rules" onClick={() => { setDraftSettings({ ...room.settings, ...room.pendingBlinds }); setModal('settings'); }}><Settings2 size={16} /><span className="label-hide-mobile">House rules</span></button>}</div></div>
       {errorBanner}
+      {motion.error && <div className="error-banner" role="alert">{motion.error}</div>}
       {!connected && <div className="connection-banner"><WifiOff size={15} /> Reconnecting to the table. Your chips are saved; actions are locked until the live connection returns.</div>}
       {room.endAfterHand && <div className="info-banner">This is the final hand. All stacks will be cashed out when it finishes.</div>}
       {ownRequest && <div className="info-banner"><HandCoins size={16} /> {chips(ownRequest.amount)} chips {ownRequest.status === 'approved' ? 'approved; they will arrive after this hand.' : 'requested. Waiting for host approval.'}</div>}
@@ -180,7 +236,10 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
             ? <span>{displayedRules.game === 'omaha_bomb' ? 'Bomb ante' : 'Ante'} <b>{chips(displayedAnte)}</b> / No blinds</span>
             : <span>Blinds <b>{chips(room.settings.smallBlind)} / {chips(room.settings.bigBlind)}</b>{displayedAnte > 0 && <> <span className="middot">/</span> Ante {chips(displayedAnte)}</>}</span>}
           <span>Hand <b>#{room.handNumber.toString().padStart(3, '0')}</b></span></div>
-        <PokerTable room={room} timeOffset={timeOffset} onChooseEmoji={open ? openEmoji : undefined} emojiDisabled={disable} />
+        <PokerTable room={room} timeOffset={timeOffset} onChooseEmoji={open ? openEmoji : undefined} emojiDisabled={disable}
+          live={connected} animations={motion.enabled}
+          emotes={emotes.active} mutedEmotes={emotes.muted} onEmote={emotes.send} onToggleMute={emotes.toggleMute}
+          emoteDisabled={!connected || !open} emoteSending={emotes.sending} emoteCooldownUntil={emotes.cooldownUntil} emoteError={emotes.error} />
         <div className={`action-console ${legal.canAct && !runoutVote ? 'your-turn' : ''}`}>
           <div className="action-heading"><span className={`turn-heading ${legal.canAct && !runoutVote ? 'positive' : ''}`}>{!open ? 'SESSION COMPLETE' : runoutVote ? 'RUNOUT CONSENT' : room.paused ? 'THE TABLE IS PAUSED' : legal.canAct ? 'YOUR MOVE' : activeHand ? `WAITING FOR ${room.players.find(player => player.id === hand.actorId)?.name.toUpperCase() ?? 'THE TABLE'}` : 'BETWEEN HANDS'}</span>
             <span className="muted">{!open ? 'Your final results are in the ledger.' : runoutVote ? room.paused ? 'Decision paused; submitted choices are saved.' : 'Betting is over. Decide before the cards run out.'
@@ -219,6 +278,11 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
         </div>
         {hand?.bounty && <BountyNotice bounty={hand.bounty} room={room} />}
         <div className="table-footer"><span><ShieldCheck size={13} /> Server-dealt. Privately held. Every chip recorded.</span><div>
+          <label className="motion-preference">Animations <select aria-label="Table animations" value={motion.setting}
+            onChange={event => {
+              const value = event.currentTarget.value;
+              if (value === 'system' || value === 'on' || value === 'off') motion.change(value);
+            }}><option value="system">Follow system</option><option value="on">On</option><option value="off">Off</option></select></label>
           {open && hero.seat !== null && <button className="text-button" disabled={disable} onClick={() => void command({ type: 'sit_out', value: !hero.sittingOut })}>{hero.sittingOut ? <Play size={14} /> : <Pause size={14} />}{hero.sittingOut ? 'Sit back in' : 'Sit out'}</button>}
           {isHost && open && <button className="text-button" disabled={disable} onClick={() => void command({ type: 'pause', value: !room.paused })}>{room.paused ? 'Resume table' : 'Pause table'}</button>}</div></div>
         <NextHandPanel room={room} disabled={disable} error={error} save={async rules => {
