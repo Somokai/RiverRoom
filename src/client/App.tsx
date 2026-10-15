@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowRight, Plus, Users, ShieldCheck, ReceiptText, ArrowUpRight, LogOut, KeyRound, LoaderCircle, Check, Copy, X } from 'lucide-react';
+import { ArrowRight, BarChart3, Plus, Users, ShieldCheck, ReceiptText, ArrowUpRight, LogOut, KeyRound, LoaderCircle, Check, Copy, X } from 'lucide-react';
 import { api, ApiError, getRoom, repeatable, useIdentity } from './api';
 import { Brand, ChipStack, Modal, Numeric, PlayingCard, bountyLabel, signedChips } from './ui';
 import { Game } from './Game';
+import { PlayerStatsDialog } from './PlayerStats';
 import { DEFAULT_SETTINGS, chips, money, type Identity, type RoomSettings, type RoomSummary, type RoomView } from '../shared/model';
 
 export function App() {
@@ -24,8 +25,9 @@ export function App() {
   const [buyIn, setBuyIn] = useState(10000);
   const [hostKey, setHostKey] = useState('');
   const [advanced, setAdvanced] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
   const practiceBots = Math.max(0, Math.min(3, settings.maxSeats - 1));
-  const acceptUser = useCallback((identity: Identity | null) => { useIdentity(identity); setUser(identity); if (!identity) setRooms([]); }, []);
+  const acceptUser = useCallback((identity: Identity | null) => { useIdentity(identity); setUser(identity); setStatsOpen(false); if (!identity) setRooms([]); }, []);
 
   useEffect(() => {
     let active = true;
@@ -106,7 +108,8 @@ export function App() {
     {room && user ? <Game key={room.id} initialRoom={room} user={user} onHome={() => setRoom(null)} onSessionExpired={() => { acceptUser(null); setRoom(null); }} /> :
       <div className="lobby-shell">
         <header className="lobby-nav"><Brand /><div className="nav-right"><span className="private-pill"><ShieldCheck size={14} /> PRIVATE TABLES</span>
-          {user ? <><span className="profile-chip"><span className="avatar small-avatar">{user.name.slice(0, 1).toUpperCase()}</span>{user.name}</span>
+          {user ? <><button className="text-button stats-nav-button" aria-label="My stats" onClick={() => setStatsOpen(true)}><BarChart3 size={18} /><span>My stats</span></button>
+            <span className="profile-chip"><span className="avatar small-avatar">{user.name.slice(0, 1).toUpperCase()}</span>{user.name}</span>
             <button className="icon-button" aria-label="Sign out" onClick={() => void run(async () => { await api('/auth/logout', {}); acceptUser(null); setRooms([]); })}><LogOut size={18} /></button></>
             : <button className="text-button" onClick={() => setModal('recover')}><KeyRound size={15} /> Recover profile</button>}</div></header>
         <main className="lobby-main">
@@ -146,6 +149,8 @@ export function App() {
         <footer className="lobby-footer"><span>Made for the home game. Built for the whole night.</span><span>Private play & bookkeeping only. No payments or prizes processed.</span></footer>
       </div>}
 
+    {statsOpen && user && <PlayerStatsDialog key={user.id} userId={user.id} close={() => setStatsOpen(false)}
+      onSessionExpired={() => { acceptUser(null); setRoom(null); }} />}
     {modal && <Modal title={modal === 'create' ? 'Make it your table.' : modal === 'join' ? 'Your seat is waiting.' : 'Welcome back.'}
       subtitle={modal === 'create' ? 'A few house rules, then you are ready to deal.' : modal === 'join' ? 'Enter the eight-character code shared by your host.' : 'Use your recovery key to restore your player identity and sessions.'}
       close={() => { if (!busy) { setModal(null); setError(''); } }}>

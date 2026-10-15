@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
-import { DEFAULT_SETTINGS, defaultHandRules, type ChipTransfer, type Hand, type HandHistory, type Identity, type Room, type RoomSettings } from '../src/shared/model';
+import { DEFAULT_SETTINGS, defaultHandRules, type ChipTransfer, type Command, type Hand, type HandHistory, type Identity, type Room, type RoomSettings } from '../src/shared/model';
+import * as cards from '../src/server/cards';
+import * as playerStats from '../src/server/stats';
 import { openDatabase, type Database } from '../src/server/database';
 import { legalActions } from '../src/server/engine';
 import { normalizeHistory, ROOM_SCHEMA_VERSION } from '../src/server/state';
@@ -53,6 +55,172 @@ async function checkDown(room: Room) {
   expect(room.hand?.street).toBe('complete');
   return room;
 }
+
+describe('private player statistics', () => {
+  const send = async (room: Room, actor: string, command: Command, commandId = randomUUID()) =>
+    (await store.execute(room.id, actor, commandId, command, room.version)).room;
+
+  test('counts voluntary preflop decisions, postflop actions and tied showdowns without counting forced contributions', async () => {
+    const host = await fresh({ ante: 25 });
+    const guest = await member(host.room);
+    const prefix = ['2c', '3c', '4c', '5c', '6c', 'As', 'Ks', 'Qs', '7c', 'Js', '8c', 'Ts'];
+    const deck = [...prefix, ...[...'23456789TJQKA'].flatMap(rank => [...'cdhs'].map(suit => rank + suit)).filter(card => !prefix.includes(card))];
+    const shuffle = vi.spyOn(cards, 'shuffleDeck').mockReturnValueOnce(deck);
+    let room: Room;
+    try { room = await send(guest.room, host.identity.id, { type: 'deal' }); }
+    finally { shuffle.mockRestore(); }
+    expect((await store.playerStats(host.identity.id)).totals.hands).toBe(0);
+    room = await send(room, host.identity.id, { type: 'act', action: 'call' });
+    room = await send(room, guest.user.id, { type: 'act', action: 'check' });
+    expect(room.hand?.street).toBe('flop');
+    room = await send(room, guest.user.id, { type: 'act', action: 'raise', amount: 100 });
+    room = await send(room, host.identity.id, { type: 'act', action: 'raise', amount: 300 });
+    room = await send(room, guest.user.id, { type: 'act', action: 'call' });
+    expect((await store.playerStats(host.identity.id)).totals.hands).toBe(0);
+    room = await checkDown(room);
+    expect(room.hand?.results[0]?.winners).toHaveLength(2);
+    const owner = await store.playerStats(host.identity.id);
+    expect(owner.totals).toEqual({
+      hands: 1, preflopOpportunities: 1, vpipHands: 1, pfrHands: 0, postflopBetsRaises: 1,
+      postflopCalls: 0, flopsSeen: 1, showdowns: 1, showdownsWon: 1, handsWon: 1,
+    });
+    expect(owner.games.find(group => group.game === 'holdem')?.counts).toEqual(owner.totals);
+    expect(owner.games.filter(group => group.game !== 'holdem').every(group => group.counts.hands === 0)).toBe(true);
+    expect((await store.playerStats(guest.user.id)).totals).toEqual({
+      ...owner.totals, vpipHands: 0, postflopCalls: 1,
+    });
+    expect(owner.trackedSince).toBe(new Date(room.hand!.startedAt).toISOString());
+    expect(owner.lastHandAt).toBe(new Date(room.hand!.completedAt!).toISOString());
+    await send(room, host.identity.id, { type: 'close' });
+    expect(await new Store(db).playerStats(host.identity.id)).toEqual(owner);
+  });
+
+  test('counts multiple raises once, ignores retried commands, and aggregates the same identity across tables', async () => {
+    const host = await fresh();
+    const guest = await member(host.room);
+    let room = await send(guest.room, host.identity.id, { type: 'deal' });
+    room = await send(room, host.identity.id, { type: 'act', action: 'raise', amount: 200 });
+    room = await send(room, guest.user.id, { type: 'act', action: 'raise', amount: 400 });
+    room = await send(room, host.identity.id, { type: 'act', action: 'raise', amount: 600 });
+    const beforeFold = room;
+    const commandId = randomUUID();
+    room = await send(room, guest.user.id, { type: 'act', action: 'fold' }, commandId);
+    const first = await store.playerStats(host.identity.id);
+    const duplicate = await store.execute(room.id, guest.user.id, commandId, { type: 'act', action: 'fold' }, beforeFold.version);
+    expect(duplicate.duplicate).toBe(true);
+    expect(await store.playerStats(host.identity.id)).toEqual(first);
+    expect(first.totals).toMatchObject({ hands: 1, vpipHands: 1, pfrHands: 1, preflopOpportunities: 1, handsWon: 1 });
+    expect((await store.playerStats(guest.user.id)).totals).toMatchObject({ vpipHands: 1, pfrHands: 1, handsWon: 0, flopsSeen: 0 });
+
+    let other = await store.create(host.identity, {
+      name: 'Same player, another session', settings: { ...DEFAULT_SETTINGS, autoDeal: false }, buyIn: 1000, commandId: randomUUID(),
+    });
+    other = await send(other, host.identity.id, { type: 'add_bot' });
+    other = await send(other, host.identity.id, { type: 'deal' });
+    other = await send(other, host.identity.id, { type: 'act', action: 'fold' });
+    expect((await store.playerStats(host.identity.id)).totals).toMatchObject({
+      hands: 2, vpipHands: 1, pfrHands: 1, preflopOpportunities: 2, handsWon: 1,
+    });
+    expect((await store.playerStats(guest.user.id)).totals.hands).toBe(1);
+    expect((await store.playerStats(other.players.find(player => player.bot)!.id)).totals.hands).toBe(0);
+  });
+
+  test('walks and timeout folds do not inflate VPIP, and folding on the flop is not a showdown', async () => {
+    const host = await fresh();
+    const guest = await member(host.room);
+    let room = await send(guest.room, host.identity.id, { type: 'deal' });
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(room.hand!.deadline! + 1);
+    try { room = (await store.timeout(room.id, room.version))!; }
+    finally { clock.mockRestore(); }
+    expect(room.hand?.street).toBe('complete');
+    expect((await store.playerStats(host.identity.id)).totals).toMatchObject({ hands: 1, preflopOpportunities: 1, vpipHands: 0, flopsSeen: 0 });
+    expect((await store.playerStats(guest.user.id)).totals).toMatchObject({ hands: 1, preflopOpportunities: 0, vpipHands: 0, handsWon: 1 });
+    room = await send(room, host.identity.id, { type: 'deal' });
+    room = await send(room, guest.user.id, { type: 'act', action: 'call' });
+    room = await send(room, host.identity.id, { type: 'act', action: 'check' });
+    room = await send(room, host.identity.id, { type: 'act', action: 'fold' });
+    for (const id of [host.identity.id, guest.user.id])
+      expect((await store.playerStats(id)).totals).toMatchObject({ hands: 2, flopsSeen: 1, showdowns: 0, showdownsWon: 0 });
+  });
+
+  test.each(['omaha', 'indian', 'omaha_bomb'] as const)('%s forced-ante all-ins count a hand and showdown but no preflop opportunity', async game => {
+    const host = await fresh({}, 500);
+    const guest = await member(host.room, 500);
+    let room = await send(guest.room, host.identity.id, {
+      type: 'next_hand', rules: { ...defaultHandRules(), game, omahaAnte: 500, indianAnte: 500, bombAnte: 500 },
+    });
+    room = await send(room, host.identity.id, { type: 'deal' });
+    expect(room.hand?.street).toBe('complete');
+    for (const id of [host.identity.id, guest.user.id]) {
+      const stats = await store.playerStats(id);
+      expect(stats.totals).toMatchObject({ hands: 1, preflopOpportunities: 0, vpipHands: 0, pfrHands: 0,
+        postflopBetsRaises: 0, postflopCalls: 0, flopsSeen: 1, showdowns: 1 });
+      expect(stats.games.find(group => group.game === game)?.counts).toEqual(stats.totals);
+    }
+  });
+
+  test('side pots and three runouts are one hand, one flop and one showdown per player', async () => {
+    const host = await fresh({}, 500);
+    const guest = await member(host.room, 1000);
+    const third = await member(guest.room, 1500);
+    let room = await send(third.room, host.identity.id, { type: 'next_hand', rules: { ...defaultHandRules(), maxRunouts: 3 } });
+    room = await send(room, host.identity.id, { type: 'deal' });
+    room = await send(room, host.identity.id, { type: 'act', action: 'raise', amount: 500 });
+    room = await send(room, guest.user.id, { type: 'act', action: 'raise', amount: 1000 });
+    room = await send(room, third.user.id, { type: 'act', action: 'call' });
+    expect(room.hand?.runoutVote?.maxRuns).toBe(3);
+    const ids = [host.identity.id, guest.user.id, third.user.id];
+    for (const id of ids) room = await send(room, id, { type: 'runouts', handId: room.hand!.id, count: 3 });
+    expect(room.hand?.street).toBe('complete');
+    expect(room.hand?.results.some(pot => pot.potIndex > 0)).toBe(true);
+    expect(room.hand?.runoutCount).toBe(3);
+    for (const id of ids) {
+      const won = room.hand!.results.some(pot => (pot.shares[id] ?? 0) > 0) ? 1 : 0;
+      expect((await store.playerStats(id)).totals).toEqual({
+        hands: 1, preflopOpportunities: 1, vpipHands: 1, pfrHands: id === third.user.id ? 0 : 1,
+        postflopBetsRaises: 0, postflopCalls: 0, flopsSeen: 1, showdowns: 1, showdownsWon: won, handsWon: won,
+      });
+    }
+  });
+
+  test('sitting-out and unfunded players are excluded; partial pre-upgrade hands are never backfilled', async () => {
+    const host = await fresh();
+    const guest = await member(host.room);
+    const observer = await member(guest.room, 0);
+    const sittingOut = await member(observer.room);
+    let room = await send(sittingOut.room, sittingOut.user.id, { type: 'sit_out', value: true });
+    room = await send(room, host.identity.id, { type: 'deal' });
+    room = await send(room, host.identity.id, { type: 'act', action: 'call' });
+    // Simulate a hand already in flight when this table was first installed.
+    await db.query('DELETE FROM rr_player_hand_stats WHERE room_id=$1', [room.id]);
+    room = await checkDown(room);
+    expect((await store.hands(room.id)).entries).toHaveLength(1);
+    for (const id of [host.identity.id, guest.user.id, observer.user.id, sittingOut.user.id])
+      expect((await store.playerStats(id)).totals.hands).toBe(0);
+    room = await send(room, host.identity.id, { type: 'deal' });
+    room = await checkDown(room);
+    expect((await store.playerStats(host.identity.id)).totals.hands).toBe(1);
+    expect((await store.playerStats(guest.user.id)).totals.hands).toBe(1);
+    expect((await store.playerStats(observer.user.id)).totals.hands).toBe(0);
+    expect((await store.playerStats(sittingOut.user.id)).totals.hands).toBe(0);
+    expect((await store.hands(room.id)).entries).toHaveLength(2);
+    expect((await store.verifyAudit(room.id)).valid).toBe(true);
+  });
+
+  test('statistics failure rolls back the entire deal rather than losing player actions or chips', async () => {
+    const host = await fresh();
+    const guest = await member(host.room);
+    const ledger = await store.ledger(guest.room.id);
+    const audit = await store.audit(guest.room.id);
+    const record = vi.spyOn(playerStats, 'recordPlayerStats').mockRejectedValueOnce(new Error('Synthetic statistics write failure'));
+    try { await expect(send(guest.room, host.identity.id, { type: 'deal' })).rejects.toThrow('Synthetic statistics write failure'); }
+    finally { record.mockRestore(); }
+    expect(await store.getRoom(guest.room.id)).toEqual(guest.room);
+    expect(await store.ledger(guest.room.id)).toEqual(ledger);
+    expect(await store.audit(guest.room.id)).toEqual(audit);
+    expect((await store.playerStats(host.identity.id)).totals.hands).toBe(0);
+  });
+});
 
 describe('mixed-game persistence and migration', () => {
   test('the new default accepts a 500-chip initial buy-in and rejects 499', async () => {
