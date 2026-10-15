@@ -134,6 +134,11 @@ export async function makeApp(store: Store, config: AppConfig) {
     res.json({ status: 'ready' });
   });
   app.get('/api/me', (req: AuthRequest, res) => { res.json({ user: req.identity ?? null, hostKeyRequired: Boolean(config.hostKey) }); });
+  app.get('/api/me/stats', requireUser, async (req: AuthRequest, res) => {
+    z.object({}).strict().parse(req.query);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ stats: await store.playerStats(req.identity!.id) });
+  });
   const authLimit = rateLimit({ windowMs: 60000, limit: config.production ? 15 : 200, standardHeaders: 'draft-8', legacyHeaders: false,
     message: { error: 'Too many sign-in attempts. Please wait a minute.' } });
   app.post('/api/auth/guest', authLimit, async (req: AuthRequest, res) => {

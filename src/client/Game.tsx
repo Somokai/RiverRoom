@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { io } from 'socket.io-client';
-import { ArrowLeft, ArrowRight, ArrowUpRight, Bot, Check, CheckCheck, ChevronDown, Copy, Crown, Download, HandCoins, History, LoaderCircle, LogOut, MessageSquare, Pause, Play, Plus, ReceiptText, Send, Settings2, ShieldCheck, Smile, Users, Volume2, VolumeX, Wifi, WifiOff, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Bot, Check, CheckCheck, ChevronDown, Copy, Crown, Download, HandCoins, History, LoaderCircle, LockKeyhole, LogOut, MessageSquare, Pause, Play, Plus, ReceiptText, Send, Settings2, ShieldCheck, Smile, Users, Volume2, VolumeX, Wifi, WifiOff, X } from 'lucide-react';
 import { api, ApiError, getRoom, submit } from './api';
 import { BountyNotice, Brand, Modal, Numeric, PlayerName, bountyLabel, ruleSummary, runLabel, signedChips } from './ui';
 import { PokerTable } from './Table';
 import { Records } from './Records';
+import { PlayerStatsDialog } from './PlayerStats';
 import { EmojiPicker } from './EmojiPicker';
 import { useCountdown } from './clock';
 import { GAME_LABELS, chips, handAnte, handGameLabel, isLegacyIndianHand, money, presetRaise, type Command, type GameVariant, type HandRules, type Identity, type RoomView, type RunoutCount } from '../shared/model';
@@ -19,7 +20,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const [notice, setNotice] = useState('');
   const [timeOffset, setTimeOffset] = useState(initialRoom.serverTime - Date.now());
   const [panel, setPanel] = useState<'players' | 'chat'>('players');
-  const [modal, setModal] = useState<'fund' | 'bot-fund' | 'settings' | 'invite' | 'cashout' | 'close' | 'transfer' | 'ledger' | 'hands' | 'audit' | 'emoji' | null>(null);
+  const [modal, setModal] = useState<'fund' | 'bot-fund' | 'settings' | 'invite' | 'cashout' | 'close' | 'transfer' | 'ledger' | 'hands' | 'audit' | 'emoji' | 'stats' | null>(null);
   const [amount, setAmount] = useState(initialRoom.settings.bigBlind * 3);
   const [funding, setFunding] = useState(initialRoom.settings.minBuyIn);
   const [botTargetId, setBotTargetId] = useState('');
@@ -260,7 +261,9 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
             <form className="chat-form" onSubmit={event => { event.preventDefault(); if (chat.trim()) void command({ type: 'chat', message: chat }).then(ok => { if (ok) setChat(''); }); }}>
               <input aria-label="Message the table" placeholder="Say something to the table..." maxLength={240} value={chat} onChange={event => setChat(event.target.value)} disabled={!open} /><button aria-label="Send message" disabled={disable || !chat.trim()}><Send size={17} /></button></form></>}
         </section>
-        <section className="session-tools"><span className="eyebrow">THE PAPER TRAIL</span><button onClick={() => setModal('ledger')}><ReceiptText size={17} /><span>Session ledger<small>Chip transfers & off-table bounties</small></span><ArrowUpRight size={16} /></button>
+        <section className="session-tools"><span className="eyebrow">THE PAPER TRAIL</span>
+          <button aria-label="My stats" onClick={() => setModal('stats')}><BarChart3 size={17} /><span>My stats<small>Advanced stats, visible only to you</small></span><LockKeyhole size={16} /></button>
+          <button onClick={() => setModal('ledger')}><ReceiptText size={17} /><span>Session ledger<small>Chip transfers & off-table bounties</small></span><ArrowUpRight size={16} /></button>
           <button onClick={() => setModal('hands')}><History size={17} /><span>Hand history<small>Every completed hand</small></span><ArrowUpRight size={16} /></button>
           <button onClick={() => setModal('audit')}><ShieldCheck size={17} /><span>Full audit journal<small>Hash-linked, exportable records</small></span><ArrowUpRight size={16} /></button></section>
         <div className="sidebar-note">A home game, not a payment service.<br />Settle recorded balances outside the app.</div>
@@ -275,7 +278,9 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
         return ok;
       }} />}
     {(modal === 'ledger' || modal === 'hands' || modal === 'audit') && <Records room={room} tab={modal} close={() => setModal(null)} />}
-    {modal && !['ledger', 'hands', 'audit', 'emoji'].includes(modal) && <Modal
+    {modal === 'stats' && <PlayerStatsDialog key={user.id} userId={user.id} close={() => setModal(null)} onSessionExpired={onSessionExpired}
+      refreshKey={hand?.street === 'complete' ? hand.id : undefined} />}
+    {modal && !['ledger', 'hands', 'audit', 'emoji', 'stats'].includes(modal) && <Modal
       title={{ fund: hero.stack === 0 ? hero.buyIns ? 'Back in the game.' : 'Bring your chips.' : 'A little more room to play.', 'bot-fund': 'Refill virtual practice chips.', settings: 'Your house. Your rules.', invite: 'Save a seat for your people.', cashout: 'Call it a night?', close: 'Wrap up this session?', transfer: 'Pass the host button.' }[modal as 'fund' | 'bot-fund' | 'settings' | 'invite' | 'cashout' | 'close' | 'transfer']}
       close={() => { if (!busy) setModal(null); }}>
       {errorBanner}
