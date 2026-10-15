@@ -287,9 +287,31 @@ them outside the app. Bot-related amounts remain virtual.
 - Per-player stack, chips committed, total funding/cash-outs, rebuy/add-on counts,
   and settled profit/loss. During a hand, settled P/L includes that player's
   committed chips so it does not prematurely count a pending wager as a loss.
+- Optional browser-local premoves while waiting: **Check/Fold** checks if free,
+  otherwise folds; **Check** cancels as soon as a bet must be called. A selection
+  applies only to the current street and is cleared on a new street/hand, pause,
+  disconnect, fold/all-in, or manual action. Uncheck it to cancel. Premoves use
+  the usual versioned, retry-safe action request and never automatically call
+  or raise; they do not survive leaving or refreshing the table. Their controls
+  stay visible below the action buttons, greyed out when unavailable.
+- After a hand, every dealt-in player (including folded players) can reveal
+  individual cards or **Reveal all**, including all four in Omaha. Reveals are
+  additive, cannot be undone, and are available until the next deal, including
+  after the final session hand. Only selected cards become public; the other
+  cards stay face down to opponents. The compact **Show cards** row stays by
+  your seat: numbered buttons match your cards from left to right, with
+  unavailable options greyed out instead of appearing and disappearing.
+  The existing showdown, Indian poker, and
+  bounty reveal rules still apply. Public hand history records voluntary
+  reveals without changing outcomes, player statistics, or chip accounting.
+  Reveal snapshots are appended to `rr_hand_reveals` and projected over the
+  original immutable hand summary; neither hand records nor audit rows are
+  rewritten. Existing room snapshots and full-card reveal lists keep their
+  stored shape.
 - Full transfer ledger, hand history, full action journal, CSV and JSON downloads.
 - Responsive desktop/mobile table, reduced-motion support, native accessible
-  dialogs, optional turn sounds, and no externally hosted images or fonts.
+  dialogs, one large suit symbol per card, optional turn sounds, and no
+  externally hosted images or fonts.
   Turn sounds start muted on each table visit. Enable them with the speaker
   button; enabling during your turn also pings. Each actionable turn pings once,
   with audio recovery after browser interruptions. If playback is blocked,

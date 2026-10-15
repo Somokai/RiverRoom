@@ -40,6 +40,7 @@ export function PlayerName({ player }: { player: Pick<Player, 'name' | 'emoji'> 
 const suits: Record<string, string> = { s: '\u2660', h: '\u2665', d: '\u2666', c: '\u2663' };
 const suitNames: Record<string, string> = { s: 'spades', h: 'hearts', d: 'diamonds', c: 'clubs' };
 const rankNames: Record<string, string> = { A: 'Ace', K: 'King', Q: 'Queen', J: 'Jack', T: '10' };
+export const cardLabel = (card: Card) => `${rankNames[card[0]!] ?? card[0]} of ${suitNames[card[1]!]}`;
 export function PlayingCard({ card, small = false, index = 0, placeholder = false, motionKey }: {
   card?: Card | null; small?: boolean; index?: number; placeholder?: boolean; motionKey?: string;
 }) {
@@ -47,12 +48,11 @@ export function PlayingCard({ card, small = false, index = 0, placeholder = fals
   if (!card) return <div data-motion-card={motionKey} role="img" className={`playing-card card-back ${small ? 'card-small' : ''}`} aria-label="Face-down card"><Spade size={small ? 16 : 28} strokeWidth={1.25} /></div>;
   const red = card[1] === 'h' || card[1] === 'd';
   const rank = card[0] === 'T' ? '10' : card[0];
-  const rankName = rankNames[card[0]!] ?? rank;
   return <div data-motion-card={motionKey} role="img" className={`playing-card card-face ${red ? 'red-suit' : 'black-suit'} ${small ? 'card-small' : ''}`}
-    aria-label={`${rankName} of ${suitNames[card[1]!]}`} style={{ '--delay': `${index * 65}ms` } as CSSProperties}>
-    <div className="card-corner"><strong>{rank}</strong><span>{suits[card[1]!]}</span></div>
+    aria-label={cardLabel(card)} style={{ '--delay': `${index * 65}ms` } as CSSProperties}>
+    <div className="card-corner"><strong>{rank}</strong></div>
     <span className="card-suit">{suits[card[1]!]}</span>
-    <div className="card-corner corner-bottom"><strong>{rank}</strong><span>{suits[card[1]!]}</span></div>
+    <div className="card-corner corner-bottom"><strong>{rank}</strong></div>
   </div>;
 }
 export function ChipStack({ gold = false, small = false }: { gold?: boolean; small?: boolean }) {

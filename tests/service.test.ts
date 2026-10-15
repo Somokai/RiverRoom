@@ -62,6 +62,99 @@ beforeAll(async () => {
 afterAll(async () => { await server?.close(); await db?.close(); });
 
 describe('persistent multiplayer service', () => {
+  test('voluntary reveals broadcast only selected cards, remain retry-safe, and update public history without accounting or stats changes', async () => {
+    const host = await guest('Reveal owner');
+    const player = await guest('Reveal opponent');
+    const watcher = await guest('Reveal observer');
+    const outsider = await guest('Reveal outsider');
+    let room = await create(host);
+    room = await enter(room, player);
+    room = await enter(room, watcher);
+    room = (await command(room, player, { type: 'fund', amount: 10000 })).json.room;
+    room = (await command(room, host, { type: 'approve', requestId: room.requests.at(-1)!.id, approve: true })).json.room;
+    room = (await command(room, host, { type: 'deal' })).json.room;
+    const handId = room.hand!.id;
+    const ownCards = room.players.find(member => member.id === host.user.id)!.cards;
+    const opponentCards = (await get(room.id, player)).players.find(member => member.id === player.user.id)!.cards;
+    expect((await command(room, host, { type: 'reveal', handId, cardIndexes: [0] })).response.status).toBe(409);
+    room = (await command(room, host, { type: 'act', action: 'fold' })).json.room;
+    const baseline = room;
+    const ledger = await store.ledger(room.id);
+    const stats = await store.playerStats(host.user.id);
+    for (const cardIndexes of [[], [-1], [2], [4], [0, 0], [0.5]])
+      expect((await command(room, host, { type: 'reveal', handId, cardIndexes })).response.status).toBe(400);
+    expect((await command(room, host, { type: 'reveal', handId, cardIndexes: [0], playerId: player.user.id })).response.status).toBe(400);
+    expect((await command(room, watcher, { type: 'reveal', handId, cardIndexes: [0] })).response.status).toBe(403);
+    expect((await command(room, outsider, { type: 'reveal', handId, cardIndexes: [0] })).response.status).toBe(403);
+    const received: RoomView[] = [];
+    const socket = connectSocket(base, { forceNew: true, reconnection: false, auth: { csrf: watcher.user.csrf },
+      extraHeaders: { Cookie: watcher.cookie, Origin: origin } });
+    socket.on('room', view => received.push(view));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Reveal observer socket timed out')), 4000);
+        socket.once('connect_error', error => { clearTimeout(timer); reject(error); });
+        socket.once('room', () => { clearTimeout(timer); resolve(); });
+        socket.once('connect', () => socket.emit('subscribe', room.id, () => {}));
+      });
+      const key = randomUUID();
+      const reveal = { type: 'reveal', handId, cardIndexes: [1] };
+      const first = await command(room, host, reveal, key);
+      expect(first.response.status).toBe(200);
+      room = first.json.room;
+      await vi.waitFor(() => expect(received.some(view => view.version === room.version)).toBe(true));
+      const broadcast = received.find(view => view.version === room.version)!;
+      expect(broadcast.players.find(member => member.id === host.user.id)!.cards).toEqual([null, ownCards[1]]);
+      expect(broadcast.players.find(member => member.id === player.user.id)!.cards).toEqual([null, null]);
+      expect(broadcast.hand!.revealed).toEqual({ [host.user.id]: [ownCards[1]] });
+      expect(room.players.find(member => member.id === host.user.id)!.cards).toEqual(ownCards);
+      expect((await command(baseline, host, reveal, key)).json.duplicate).toBe(true);
+      expect((await command(room, host, { ...reveal, cardIndexes: [0] }, key)).response.status).toBe(409);
+      expect((await command(baseline, player, { type: 'reveal', handId, cardIndexes: [0] })).response.status).toBe(409);
+      room = (await command(room, player, { type: 'reveal', handId, cardIndexes: [0] })).json.room;
+      const history = (await request(`/rooms/${room.id}/hands`, undefined, watcher)).json.entries[0];
+      expect(history.revealed).toEqual({ [host.user.id]: [ownCards[1]], [player.user.id]: [opponentCards[0]] });
+      const exported = await request(`/rooms/${room.id}/export.json`, undefined, watcher);
+      expect(exported.text).not.toContain(`"${ownCards[0]}"`);
+      expect(exported.text).not.toContain(`"${opponentCards[1]}"`);
+      expect(exported.json.room.hand).not.toHaveProperty('holeCards');
+      expect(await store.ledger(room.id)).toEqual(ledger);
+      expect(await store.playerStats(host.user.id)).toEqual(stats);
+      expect((await store.verifyAudit(room.id)).valid).toBe(true);
+      room = (await command(room, host, { type: 'close' })).json.room;
+      expect((await command(room, player, { type: 'reveal', handId, cardIndexes: [1] })).response.status).toBe(200);
+    } finally { socket.disconnect(); }
+  });
+
+  test('a partial reveal and its public history survive reopening persistent storage', async () => {
+    const path = await mkdtemp(join(tmpdir(), 'river-room-reveal-test-'));
+    let local: Database | null = null;
+    try {
+      local = await openDatabase({ directory: join(path, 'postgres') });
+      let persisted = new Store(local);
+      const person = await persisted.createIdentity('Persistent reveal');
+      let room = await persisted.create(person.user, {
+        name: 'Reveal persistence', settings: { ...DEFAULT_SETTINGS, autoDeal: false }, buyIn: 10000, commandId: randomUUID(),
+      });
+      room = (await persisted.execute(room.id, person.user.id, randomUUID(), { type: 'add_bot' }, room.version)).room;
+      room = (await persisted.execute(room.id, person.user.id, randomUUID(), { type: 'deal' }, room.version)).room;
+      room = (await persisted.execute(room.id, person.user.id, randomUUID(), { type: 'act', action: 'fold' }, room.version)).room;
+      const key = randomUUID();
+      const reveal = { type: 'reveal' as const, handId: room.hand!.id, cardIndexes: [1] };
+      const version = room.version;
+      room = (await persisted.execute(room.id, person.user.id, key, reveal, version)).room;
+      const history = await persisted.hands(room.id);
+      await local.close(); local = null;
+      local = await openDatabase({ directory: join(path, 'postgres') });
+      persisted = new Store(local);
+      expect(await persisted.getRoom(room.id)).toEqual(room);
+      expect(await persisted.hands(room.id)).toEqual(history);
+      expect(history.entries[0]!.revealed[person.user.id]).toEqual([room.hand!.holeCards[person.user.id]![1]]);
+      expect((await persisted.execute(room.id, person.user.id, key, reveal, version)).duplicate).toBe(true);
+      expect((await persisted.verifyAudit(room.id)).valid).toBe(true);
+    } finally { await local?.close(); await rm(path, { recursive: true, force: true }); }
+  });
+
   test('advanced stats are self-only, absent from shared payloads, and follow the recovered identity', async () => {
     const host = await guest('Stats owner');
     const player = await guest('Stats opponent');

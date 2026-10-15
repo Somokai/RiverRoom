@@ -57,6 +57,12 @@ CREATE TABLE IF NOT EXISTS rr_hands (
   PRIMARY KEY(room_id, hand_id)
 );
 CREATE INDEX IF NOT EXISTS rr_hands_room ON rr_hands(room_id, hand_number);
+CREATE TABLE IF NOT EXISTS rr_hand_reveals (
+  room_id TEXT NOT NULL, hand_id TEXT NOT NULL, room_version INTEGER NOT NULL,
+  revealed JSONB NOT NULL CHECK (jsonb_typeof(revealed) = 'object'),
+  PRIMARY KEY(room_id, hand_id, room_version),
+  FOREIGN KEY(room_id, hand_id) REFERENCES rr_hands(room_id, hand_id)
+);
 CREATE TABLE IF NOT EXISTS rr_player_hand_stats (
   room_id TEXT NOT NULL REFERENCES rr_rooms(id), hand_id TEXT NOT NULL,
   user_id TEXT NOT NULL REFERENCES rr_users(id),
@@ -87,6 +93,9 @@ CREATE TRIGGER rr_ledger_immutable BEFORE UPDATE OR DELETE ON rr_ledger
   FOR EACH ROW EXECUTE FUNCTION rr_protect_history();
 DROP TRIGGER IF EXISTS rr_hands_immutable ON rr_hands;
 CREATE TRIGGER rr_hands_immutable BEFORE UPDATE OR DELETE ON rr_hands
+  FOR EACH ROW EXECUTE FUNCTION rr_protect_history();
+DROP TRIGGER IF EXISTS rr_hand_reveals_immutable ON rr_hand_reveals;
+CREATE TRIGGER rr_hand_reveals_immutable BEFORE UPDATE OR DELETE ON rr_hand_reveals
   FOR EACH ROW EXECUTE FUNCTION rr_protect_history();
 `;
 

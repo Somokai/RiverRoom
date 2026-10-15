@@ -136,6 +136,7 @@ export interface Hand {
   completedAt: number | null;
   showdown: boolean;
   results: PotResult[];
+  // Public cards in their original deal order; a voluntary reveal may show only a subset.
   revealed: Record<string, Card[]>;
   balanceAfter: Record<string, number>;
   bountyAfter: Record<string, number>;
@@ -197,6 +198,7 @@ export type Command =
   | { type: 'join'; name: string }
   | { type: 'deal' }
   | { type: 'act'; action: 'fold' | 'check' | 'call' | 'raise'; amount?: number }
+  | { type: 'reveal'; handId: string; cardIndexes: number[] }
   | { type: 'fund'; amount: number }
   | { type: 'approve'; requestId: string; approve: boolean }
   | { type: 'cash_out' }

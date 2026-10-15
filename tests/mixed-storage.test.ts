@@ -222,6 +222,45 @@ describe('private player statistics', () => {
   });
 });
 
+describe('voluntary reveal persistence', () => {
+  test('reveal history, audit, command keys, and snapshots roll back together if recording fails', async () => {
+    const host = await fresh();
+    const guest = await member(host.room);
+    let room = (await store.execute(guest.room.id, host.identity.id, randomUUID(), { type: 'deal' }, guest.room.version)).room;
+    room = (await store.execute(room.id, host.identity.id, randomUUID(), { type: 'act', action: 'fold' }, room.version)).room;
+    const beforeHistory = await store.hands(room.id);
+    const beforeAudit = await store.audit(room.id);
+    const beforeLedger = await store.ledger(room.id);
+    const beforeStats = await store.playerStats(host.identity.id);
+    const command: Command = { type: 'reveal', handId: room.hand!.id, cardIndexes: [1] };
+    const commandId = randomUUID();
+    const record = vi.spyOn(playerStats, 'recordPlayerStats').mockRejectedValueOnce(new Error('Synthetic reveal transaction failure'));
+    try {
+      await expect(store.execute(room.id, host.identity.id, commandId, command, room.version)).rejects.toThrow('Synthetic reveal transaction failure');
+    } finally { record.mockRestore(); }
+    expect(await store.getRoom(room.id)).toEqual(room);
+    expect(await store.hands(room.id)).toEqual(beforeHistory);
+    expect(await store.audit(room.id)).toEqual(beforeAudit);
+    expect((await db.query('SELECT room_version FROM rr_hand_reveals WHERE room_id=$1', [room.id])).rows).toEqual([]);
+    const revealed = await store.execute(room.id, host.identity.id, commandId, command, room.version);
+    expect(revealed.duplicate).toBe(false);
+    const history = (await store.hands(room.id)).entries[0]!;
+    expect({ ...history, revealed: beforeHistory.entries[0]!.revealed }).toEqual(beforeHistory.entries[0]);
+    expect(history.revealed).toEqual({ [host.identity.id]: [room.hand!.holeCards[host.identity.id]![1]] });
+    expect(await store.ledger(room.id)).toEqual(beforeLedger);
+    expect(await store.playerStats(host.identity.id)).toEqual(beforeStats);
+    expect((await store.audit(room.id)).entries.slice(1)).toEqual(beforeAudit.entries);
+    expect((await store.verifyAudit(room.id)).valid).toBe(true);
+    expect((await store.execute(room.id, host.identity.id, commandId, command, room.version)).duplicate).toBe(true);
+    expect((await db.query('SELECT room_version FROM rr_hand_reveals WHERE room_id=$1', [room.id])).rows).toHaveLength(1);
+    expect((await db.query<{ summary: HandHistory }>('SELECT summary FROM rr_hands WHERE room_id=$1', [room.id])).rows[0]!.summary)
+      .toEqual(beforeHistory.entries[0]);
+    await expect(db.query('UPDATE rr_hands SET summary=summary WHERE room_id=$1', [room.id])).rejects.toThrow('append-only');
+    await expect(db.query('UPDATE rr_hand_reveals SET revealed=revealed WHERE room_id=$1', [room.id])).rejects.toThrow('append-only');
+    await expect(db.query('DELETE FROM rr_hand_reveals WHERE room_id=$1', [room.id])).rejects.toThrow('append-only');
+  });
+});
+
 describe('mixed-game persistence and migration', () => {
   test('the new default accepts a 500-chip initial buy-in and rejects 499', async () => {
     expect(DEFAULT_SETTINGS.minBuyIn).toBe(500);

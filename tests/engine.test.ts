@@ -144,6 +144,100 @@ describe('per-table player emojis', () => {
   });
 });
 
+describe('voluntary post-hand card reveals', () => {
+  test.each(['holdem', 'omaha', 'omaha_bomb'] as const)('%s lets folded players and winners reveal an ordered subset, then all cards', game => {
+    let room = table();
+    room = apply(room, 'p0', { type: 'next_hand', rules: { ...room.nextHandRules, game } });
+    room = start(room, makeDeck());
+    const folded = room.hand!.actorId!;
+    room = act(room, 'fold');
+    const winner = room.players.find(player => player.id !== folded)!.id;
+    const before = structuredClone(room);
+    const hand = room.hand!;
+    const ownCards = hand.holeCards[folded]!;
+    const index = ownCards.length - 1;
+    const result = transition(room, folded, { type: 'reveal', handId: hand.id, cardIndexes: [index] }, { now: ++now });
+    assertRoom(result.room); verifyTransfers(room, result.room, result.transfers);
+    expect(result.transfers).toEqual([]);
+    expect(result.room.players).toEqual(before.players);
+    expect({ ...result.room.hand, revealed: before.hand!.revealed }).toEqual(before.hand);
+    expect(result.room.nextHandAt).toBe(before.nextHandAt);
+    expect(result.events).toEqual([expect.objectContaining({ kind: 'cards_revealed', actorId: folded,
+      message: `${room.players.find(player => player.id === folded)!.name} revealed ${ownCards[index]}.` })]);
+    room = result.room;
+    expect(room.hand!.revealed[folded]).toEqual([ownCards[index]]);
+    expect(roomView(room, folded, new Set()).players.find(player => player.id === folded)!.cards).toEqual(ownCards);
+    const peer = roomView(room, winner, new Set());
+    expect(peer.players.find(player => player.id === folded)!.cards).toEqual(ownCards.map((card, i) => i === index ? card : null));
+    expect(peer.hand).not.toHaveProperty('holeCards');
+    for (const card of ownCards.slice(0, index)) expect(JSON.stringify(peer)).not.toContain(`"${card}"`);
+    expect(before.hand!.revealed).toEqual({});
+    room = apply(room, winner, { type: 'reveal', handId: hand.id, cardIndexes: [0] });
+    expect(room.hand!.revealed[winner]).toEqual([hand.holeCards[winner]![0]]);
+    room = apply(room, folded, { type: 'reveal', handId: hand.id, cardIndexes: ownCards.map((_, i) => i).reverse() });
+    expect(room.hand!.revealed[folded]).toEqual(ownCards);
+    expect(roomView(room, winner, new Set()).players.find(player => player.id === folded)!.cards).toEqual(ownCards);
+    expect(() => apply(room, folded, { type: 'reveal', handId: hand.id, cardIndexes: [index] })).toThrow('already revealed');
+  });
+
+  test('rejects active hands, stale hand identifiers, spectators, outsiders, and invalid card selections', () => {
+    let room = start(table());
+    const id = room.hand!.id;
+    expect(() => apply(room, 'p0', { type: 'reveal', handId: id, cardIndexes: [0] })).toThrow('after the hand ends');
+    room = act(room, 'fold');
+    room = apply(room, 'watcher', { type: 'join', name: 'Observer' });
+    const before = structuredClone(room);
+    expect(() => apply(room, 'watcher', { type: 'reveal', handId: id, cardIndexes: [0] })).toThrow('not dealt');
+    expect(() => apply(room, 'outsider', { type: 'reveal', handId: id, cardIndexes: [0] })).toThrow('not a member');
+    for (const cardIndexes of [[], [-1], [2], [0, 0], [0.5], [Number.NaN], [Number.MAX_SAFE_INTEGER]])
+      expect(() => apply(room, 'p0', { type: 'reveal', handId: id, cardIndexes })).toThrow('Choose one or more');
+    expect(room).toEqual(before);
+    room = start(room);
+    expect(() => apply(room, 'p0', { type: 'reveal', handId: id, cardIndexes: [0] })).toThrow('no longer available');
+  });
+
+  test('the last hand can be revealed after automatic session closure without touching cash-outs or outcomes', () => {
+    let room = start(table());
+    room = apply(room, 'p0', { type: 'close' });
+    room = act(room, 'fold');
+    expect(room.status).toBe('closed');
+    const before = structuredClone(room);
+    room = apply(room, 'p0', { type: 'reveal', handId: room.hand!.id, cardIndexes: [1] });
+    expect(room.players).toEqual(before.players);
+    expect(room.status).toBe('closed');
+    expect(room.closedAt).toBe(before.closedAt);
+    expect(room.hand!.results).toEqual(before.hand!.results);
+    expect(room.nextHandAt).toBeNull();
+    expect(() => apply(room, 'p0', { type: 'deal' })).toThrow('closed');
+  });
+
+  test('showdown and Indian visibility remain mandatory; already-public cards cannot be hidden', () => {
+    const showdown = checkDown(start(table()));
+    for (const player of showdown.hand!.players) {
+      expect(showdown.hand!.revealed[player.id]).toEqual(showdown.hand!.holeCards[player.id]);
+      expect(() => apply(showdown, player.id, { type: 'reveal', handId: showdown.hand!.id, cardIndexes: [0] })).toThrow('already revealed');
+    }
+    let indian = table();
+    indian = apply(indian, 'p0', { type: 'next_hand', rules: { ...indian.nextHandRules, game: 'indian' } });
+    indian = act(start(indian), 'fold');
+    for (const player of indian.hand!.players)
+      expect(indian.hand!.revealed[player.id]).toEqual(indian.hand!.holeCards[player.id]);
+  });
+
+  test('reveal invariants reject foreign cards, duplicates, reordering, empty lists, and active-hand exposure', () => {
+    const active = start(table(), makeDeck());
+    const room = act(active, 'fold');
+    for (const cards of [[], [room.hand!.holeCards.p1![0]!], [room.hand!.holeCards.p0![0]!, room.hand!.holeCards.p0![0]!],
+      [...room.hand!.holeCards.p0!].reverse()]) {
+      const invalid = structuredClone(room);
+      invalid.hand!.revealed.p0 = cards;
+      expect(() => assertRoom(invalid)).toThrow('Revealed cards');
+    }
+    active.hand!.revealed.p0 = [active.hand!.holeCards.p0![0]!];
+    expect(() => assertRoom(active)).toThrow('before a hand ends');
+  });
+});
+
 describe('no-limit rules', () => {
   test('heads-up button is small blind and acts first only preflop', () => {
     let room = start(table());

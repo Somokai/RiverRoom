@@ -54,7 +54,17 @@ describe('local bot harness checks', () => {
     Object.assign(privateFields.hand!, { deck: ['Ac'] });
     expect(() => assertPrivateView(privateFields, 'host')).toThrow('Private deck');
     const premature = structuredClone(view); premature.hand!.revealed[premature.players[1]!.id] = ['As', 'Kd'];
-    expect(() => assertPrivateView(premature, 'host')).toThrow('before a completed showdown');
+    expect(() => assertPrivateView(premature, 'host')).toThrow('before the hand completed');
+  });
+  test('accepts a voluntary partial reveal by a folded player without accepting an extra hidden card', () => {
+    const { room } = fixture();
+    const completed = transition(room, 'host', { type: 'act', action: 'fold' }, { now: Date.now() }).room;
+    const shown = transition(completed, 'host', { type: 'reveal', handId: completed.hand!.id, cardIndexes: [1] }, { now: Date.now() }).room;
+    const opponent = shown.players.find(player => player.id !== 'host')!.id;
+    const view = roomView(shown, opponent, new Set());
+    expect(() => assertPrivateView(view, opponent)).not.toThrow();
+    view.players.find(player => player.id === 'host')!.cards[0] = shown.hand!.holeCards.host![0]!;
+    expect(() => assertPrivateView(view, opponent)).toThrow('public result');
   });
   test('scripted test policies submit actual legal intentions, never stack edits', () => {
     const { room } = fixture();
