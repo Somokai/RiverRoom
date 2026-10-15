@@ -141,7 +141,7 @@ the separate bounty accounts as well as the in-play stacks.
 
 ### Choose the next hand
 
-The host's **Next hand** controls select the game and house rules for upcoming
+The host's **Next hand** controls select independent hand attributes and house rules for upcoming
 deals. The selection stays in effect until changed. A hand snapshots its rules
 when dealt: changing the next selection never changes cards, betting limits,
 bounties, or runout permissions in an active hand.
@@ -153,10 +153,21 @@ bounties, or runout permissions in an active hand.
 | Double-board PLO bomb pot | Four private cards; configured ante instead of blinds; two flops immediately, with no preflop betting |
 | Indian poker (two cards) | Two face-out hole cards; opponents see both but their owner cannot until folding or the hand ends; mandatory round ante, normal blinds and no-limit Hold'em betting |
 
-Indian poker follows the normal Hold'em sequence: preflop, a three-card flop,
+Select any combination of **PLO (four cards, pot limit)**, **Double board**,
+**Bomb pot**, and **Indian (face-out cards)**. With none selected, play ordinary
+Texas Hold'em. Double board does not require a bomb pot or PLO; bomb pots may
+have one board. Indian visibility also works with four-card PLO.
+The summary and history describe the full combination. Existing saved presets
+and older API clients retain their original behavior.
+Private statistics keep their existing game buckets: PLO combinations count
+as Omaha (or double-board PLO bomb pot without Indian visibility), two-card
+Indian combinations as Indian, and other two-card combinations as Hold'em.
+
+Without the bomb-pot attribute, Indian poker follows the normal sequence: preflop, a three-card flop,
 turn, and river, with betting on every street. The best five-card hand wins
 using any combination of the two hole cards and five board cards (including
-playing the board). Your own cards stay hidden while you are live, including
+playing the board); selecting PLO instead requires exactly two of four hole cards
+and three from each board. Your own cards stay hidden while you are live, including
 all-in consent; folding reveals both to you immediately, also after reconnect.
 Opponents' cards remain visible. Indian hands support one, two, or three
 consensual all-in runouts under the same rules as Hold'em.
@@ -170,14 +181,16 @@ does not count toward a call, and is recorded separately in the chip ledger.
 PLO's pot-limit calculation includes the posted antes. Short stacks post only
 their remaining chips and are all-in, with normal side-pot eligibility.
 Sitting-out players do not pay. The table minimum buy-in remains 500 by default.
+If attributes are combined, post just one ante: bomb ante takes precedence,
+then Indian ante, then PLO ante, then the regular table ante. These never stack.
 
 Already-dealt hands keep their original betting and accounting on upgrade.
 In particular, a saved one-card Indian hand finishes under its old rules and
 is labeled as legacy in the table and history; the next Indian deal uses two
 cards. Historical records are projected without rewriting their audit trail.
 
-Bomb pots use one burn card per street followed by cards to both boards. Each
-board is evaluated separately under Omaha's exact two-plus-three rule. The
+All deals use one burn card per street followed by cards to each selected board. Each
+board is evaluated separately under the selected Hold'em or Omaha rules. The
 configured big blind still supplies the minimum betting unit. The bomb ante
 is independently configurable in chips, initially five big blinds. It is not
 charged in addition to the regular PLO ante.
@@ -220,6 +233,9 @@ other games do not qualify. Every other dealt-in participant owes the configured
 amount, including folded or busted players; spectators and mid-hand arrivals do
 not. The winning cards are shown to verify the claim, even after an uncontested
 win.
+
+The bounty can combine with double-board and bomb-pot Hold'em, but not Indian
+visibility or PLO; winning only one board is not a scoop and does not qualify.
 
 These are **separate settlement obligations**, not bets or automatic payments.
 The winner's bounty balance increases and the other participants' balances

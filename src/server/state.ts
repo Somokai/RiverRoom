@@ -1,13 +1,13 @@
 import { defaultHandRules, type HandHistory, type Room } from '../shared/model.js';
 
-export const ROOM_SCHEMA_VERSION = 3;
+export const ROOM_SCHEMA_VERSION = 4;
 
 // Legacy snapshots predate game variants. Their active hands must stay ordinary, single-run Hold'em.
 export function normalizeRoom(room: Room): Room {
   if (room.schemaVersion === ROOM_SCHEMA_VERSION) return room;
-  if (room.schemaVersion !== undefined && room.schemaVersion !== 1 && room.schemaVersion !== 2)
+  if (room.schemaVersion !== undefined && room.schemaVersion !== 1 && room.schemaVersion !== 2 && room.schemaVersion !== 3)
     throw new Error('This room uses an unsupported saved-state version.');
-  if (room.schemaVersion !== 2) {
+  if (room.schemaVersion !== 2 && room.schemaVersion !== 3) {
     room.nextHandRules = defaultHandRules(room.settings);
     for (const player of room.players) player.bountyNet = 0;
     const hand = room.hand;
@@ -27,6 +27,7 @@ export function normalizeRoom(room: Room): Room {
   room.nextHandRules.omahaAnte ??= defaultHandRules(room.settings).omahaAnte;
   // Zero records the absence of a variant-specific ante in already-dealt PLO hands.
   if (room.hand) room.hand.rules.omahaAnte ??= 0;
+  // Schema-three presets keep their absent modifiers: shared rule helpers resolve their original behavior.
   room.schemaVersion = ROOM_SCHEMA_VERSION;
   return room;
 }

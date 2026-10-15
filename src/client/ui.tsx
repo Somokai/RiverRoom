@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
 import { X, Spade } from 'lucide-react';
-import { boardRuns, chips, money, type BountyAward, type Card, type Hand, type HandRules, type Player, type RoomView } from '../shared/model';
+import { boardRuns, chips, handAnte, isBombPot, isDoubleBoard, isIndian, isOmaha, money, supportsSevenDeuce, type BountyAward, type Card, type Hand, type HandRules, type Player, type RoomView } from '../shared/model';
 import { findPlayerEmoji } from '../shared/emoji';
 import { boardCardKey } from './tableMotion';
 
@@ -81,12 +81,17 @@ export const runLabel = (count: number) => count === 1 ? 'Run once' : count === 
 
 export function ruleSummary(rules: HandRules, legacyIndian = false): string {
   const runs = rules.maxRunouts === 1 ? 'run once' : `consent for up to ${rules.maxRunouts} runs`;
-  if (rules.game === 'indian') return legacyIndian
-    ? `${chips(rules.indianAnte)} ante · legacy one-card hand · one betting round`
-    : `${chips(rules.indianAnte)} round ante · two face-out cards · Hold'em betting · ${runs}`;
-  if (rules.game === 'omaha_bomb') return `${chips(rules.bombAnte)} ante · two boards · pot limit · ${runs}`;
-  if (rules.game === 'omaha') return `${rules.omahaAnte > 0 ? `${chips(rules.omahaAnte)} round ante` : 'Legacy table ante'} · four private cards · pot limit · ${runs}`;
-  return `No limit · ${rules.sevenDeuceBounty ? `${chips(rules.sevenDeuceBounty)} per opponent for 7/2` : '7/2 bounty off'} · ${runs}`;
+  if (legacyIndian) return `${chips(rules.indianAnte)} ante · legacy one-card hand · one betting round`;
+  const details = [
+    isOmaha(rules) ? 'pot limit' : 'No limit',
+    `${isOmaha(rules) ? 'four' : 'two'} ${isIndian(rules) ? 'face-out' : 'private'} cards`,
+  ];
+  if (isDoubleBoard(rules)) details.push('two boards');
+  if (isBombPot(rules) || isIndian(rules) || isOmaha(rules))
+    details.push(`${chips(handAnte(rules, { ante: 0 }))} round ante`);
+  if (isBombPot(rules)) details.push('no blinds or preflop betting');
+  if (supportsSevenDeuce(rules)) details.push(rules.sevenDeuceBounty ? `${chips(rules.sevenDeuceBounty)} per opponent for 7/2` : '7/2 bounty off');
+  return [...details, runs].join(' · ');
 }
 
 export function CommunityBoards({ hand, small = false, complete = false, motion = false, onRunChange }: {

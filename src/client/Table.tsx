@@ -1,6 +1,6 @@
 import { memo, useEffect, useState, type CSSProperties } from 'react';
 import { Bot, Pause, Crown, WifiOff, Spade, MessageCircle, VolumeX } from 'lucide-react';
-import { GAME_LABELS, chips, handGameLabel, isLegacyIndianHand, type RoomView } from '../shared/model';
+import { chips, handGameLabel, isIndian, isLegacyIndianHand, isOmaha, rulesGameLabel, type RoomView } from '../shared/model';
 import { EMOTES, type EmoteId, type TableEmote } from '../shared/emotes';
 import { ChipStack, CommunityBoards, PlayerName, PlayingCard, cardLabel } from './ui';
 import { useCountdown } from './clock';
@@ -29,13 +29,13 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
   }, [menu, menuPlayer, room.status]);
   const hand = room.hand;
   const hero = room.players.find(player => player.id === room.youId)!;
-  const game = hand?.rules.game ?? room.nextHandRules.game;
-  const indian = game === 'indian';
+  const rules = hand?.rules ?? room.nextHandRules;
+  const indian = isIndian(rules);
   const active = !!hand && hand.street !== 'complete';
   const legacyIndian = !!hand && isLegacyIndianHand(hand);
   const hiddenOwn = indian && active && !!hero.hand && !hero.hand.folded;
   const publicCards = hand?.revealed[room.youId] ?? [];
-  const revealCount = hero.cards.length || (legacyIndian ? 1 : game === 'omaha' || game === 'omaha_bomb' ? 4 : 2);
+  const revealCount = hero.cards.length || (legacyIndian ? 1 : isOmaha(rules) ? 4 : 2);
   const hiddenCardIndexes = hero.cards.flatMap((card, index) => card && !publicCards.includes(card) ? [index] : []);
   const revealAvailable = !revealDisabled && hand?.street === 'complete' && !!hero.hand;
   const vote = active ? hand.runoutVote : null;
@@ -68,7 +68,7 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
   return <div ref={motion.surface} role="region" data-room-version={room.version} data-table-motion={animations ? 'on' : 'off'} className={`table-stage ${room.settings.maxSeats >= 8 ? 'table-crowded' : ''} ${doubleBoard ? 'table-double-board' : ''} ${indian ? 'table-indian' : ''} ${room.paused ? 'table-is-paused' : ''}`}
     style={{ '--compact-table-height': `${compactHero + 95}px`, '--compact-community-y': `${compactCommunity}px` } as CSSProperties} aria-label="Poker table">
     <div className="table-shadow" /><div className="table-rail"><div className="table-felt"><span className="felt-wordmark">RIVER ROOM <Spade size={14} fill="currentColor" /></span>
-      <span className="felt-subtitle">{(hand ? handGameLabel(hand) : GAME_LABELS[game]).toUpperCase()}</span></div></div>
+      <span className="felt-subtitle">{(hand ? handGameLabel(hand) : rulesGameLabel(rules)).toUpperCase()}</span></div></div>
     <div className="community">
       <span className="street-label">{streetName}</span>
       {hand ? <><div className="pot-display" data-motion-pot><span className="table-deck" data-motion-deck aria-hidden="true"><i /><i /><i /></span>

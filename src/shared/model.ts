@@ -9,11 +9,39 @@ export const GAME_LABELS: Record<GameVariant, string> = {
 
 export interface HandRules {
   game: GameVariant;
+  // Missing modifiers retain the original preset's behavior for older command clients.
+  doubleBoard?: boolean;
+  bombPot?: boolean;
+  indian?: boolean;
   bombAnte: number;
   indianAnte: number;
   omahaAnte: number;
   sevenDeuceBounty: number;
   maxRunouts: RunoutCount;
+}
+export const isOmaha = (rules: HandRules): boolean => rules.game === 'omaha' || rules.game === 'omaha_bomb';
+export const isIndian = (rules: HandRules): boolean => rules.indian ?? rules.game === 'indian';
+export const isBombPot = (rules: HandRules): boolean => rules.bombPot ?? rules.game === 'omaha_bomb';
+export const isDoubleBoard = (rules: HandRules): boolean => rules.doubleBoard ?? rules.game === 'omaha_bomb';
+export const handModifiers = (rules: HandRules) => ({
+  doubleBoard: isDoubleBoard(rules), bombPot: isBombPot(rules), indian: isIndian(rules),
+});
+export const supportsSevenDeuce = (rules: HandRules): boolean => !isOmaha(rules) && !isIndian(rules);
+// Keep existing statistics buckets; mixed Indian/PLO hands belong to the PLO bucket.
+export function handGameVariant(rules: HandRules): GameVariant {
+  return isOmaha(rules) ? isBombPot(rules) && isDoubleBoard(rules) && !isIndian(rules) ? 'omaha_bomb' : 'omaha'
+    : isIndian(rules) ? 'indian' : 'holdem';
+}
+export function rulesGameLabel(rules: HandRules): string {
+  const omaha = isOmaha(rules);
+  const indian = isIndian(rules);
+  const bomb = isBombPot(rules);
+  const double = isDoubleBoard(rules);
+  if (!double && !bomb) return omaha
+    ? indian ? 'Indian pot-limit Omaha' : GAME_LABELS.omaha
+    : indian ? GAME_LABELS.indian : GAME_LABELS.holdem;
+  if (omaha && double && bomb && !indian) return GAME_LABELS.omaha_bomb;
+  return `${double ? 'Double-board ' : ''}${indian ? 'Indian ' : ''}${omaha ? 'pot-limit Omaha' : "Hold'em"}${bomb ? ' bomb pot' : ''}`;
 }
 export function defaultHandRules(settings: Pick<RoomSettings, 'bigBlind'> = DEFAULT_SETTINGS): HandRules {
   return {
@@ -22,8 +50,8 @@ export function defaultHandRules(settings: Pick<RoomSettings, 'bigBlind'> = DEFA
   };
 }
 export function handAnte(rules: HandRules, settings: Pick<RoomSettings, 'ante'>): number {
-  return rules.game === 'omaha_bomb' ? rules.bombAnte : rules.game === 'indian' ? rules.indianAnte
-    : rules.game === 'omaha' && rules.omahaAnte > 0 ? rules.omahaAnte : settings.ante;
+  return isBombPot(rules) ? rules.bombAnte : isIndian(rules) ? rules.indianAnte
+    : isOmaha(rules) && rules.omahaAnte > 0 ? rules.omahaAnte : settings.ante;
 }
 
 // Saved one-card Indian hands have no community-board slots; finish them under their original rules.
@@ -31,7 +59,7 @@ export function isLegacyIndianHand(hand: Pick<Hand, 'rules' | 'boards'>): boolea
   return hand.rules.game === 'indian' && hand.boards.length === 0;
 }
 export function handGameLabel(hand: Pick<Hand, 'rules' | 'boards'>): string {
-  return isLegacyIndianHand(hand) ? 'Indian poker (legacy one card)' : GAME_LABELS[hand.rules.game];
+  return isLegacyIndianHand(hand) ? 'Indian poker (legacy one card)' : rulesGameLabel(hand.rules);
 }
 export interface RunoutVote {
   eligible: string[];
