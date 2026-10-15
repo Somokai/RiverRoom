@@ -290,6 +290,12 @@ them outside the app. Bot-related amounts remain virtual.
 - Full transfer ledger, hand history, full action journal, CSV and JSON downloads.
 - Responsive desktop/mobile table, reduced-motion support, native accessible
   dialogs, optional turn sounds, and no externally hosted images or fonts.
+  Turn sounds start muted on each table visit. Enable them with the speaker
+  button; enabling during your turn also pings. Each actionable turn pings once,
+  with audio recovery after browser interruptions. If playback is blocked,
+  return to the table and tap or press a key; a failed audio request displays
+  an error and lets you enable sounds again. Browser/OS muting or a suspended
+  background page can still prevent an audible alert.
 
 There is **no rake, payment collection, money transfer, public matchmaking,
 real-money gaming certification, tournament elimination, or blind-level timer**.

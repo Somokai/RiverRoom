@@ -68,6 +68,187 @@ async function checkAction(page: Page, roomId: string) {
   await expect.poll(async () => (await getRoom(page, roomId)).version).toBeGreaterThan(view.version);
 }
 
+interface TurnAudioProbe {
+  pings: number;
+  resumes: number;
+  blocked: boolean;
+  rejectNext: boolean;
+  suspend: () => void;
+  release: () => void;
+}
+declare global {
+  interface Window {
+    turnAudio: TurnAudioProbe;
+    turnAudioContext: AudioContext;
+    turnAudioPings: number;
+  }
+}
+
+test('turn sounds enable mid-turn, recover suspended audio, and never replay stale or duplicate turns', async ({ page, browser }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    const probe: TurnAudioProbe = {
+      pings: 0, resumes: 0, blocked: false, rejectNext: false, suspend: () => {}, release: () => {},
+    };
+    Object.defineProperty(window, 'turnAudio', { value: probe });
+    Object.defineProperty(window, 'AudioContext', { value: class {
+      state = 'suspended';
+      currentTime = 0;
+      destination = {};
+      onstatechange: (() => void) | null = null;
+      pending: (() => void)[] = [];
+      constructor() {
+        probe.suspend = () => { this.state = 'suspended'; this.onstatechange?.(); };
+        probe.release = () => {
+          probe.blocked = false;
+          this.state = 'running'; this.onstatechange?.();
+          for (const resolve of this.pending.splice(0)) resolve();
+        };
+      }
+      resume() {
+        probe.resumes++;
+        if (probe.rejectNext) {
+          probe.rejectNext = false;
+          return Promise.reject(new Error('Audio blocked'));
+        }
+        if (probe.blocked) return new Promise<void>(resolve => this.pending.push(resolve));
+        this.state = 'running'; this.onstatechange?.();
+        return Promise.resolve();
+      }
+      close() { this.state = 'closed'; return Promise.resolve(); }
+      createOscillator() {
+        const context = this;
+        return {
+          frequency: { value: 0 }, onended: null as (() => void) | null,
+          connect() {}, disconnect() {},
+          start() {
+            if (context.state !== 'running') throw new Error('Scheduled while audio was suspended');
+            probe.pings++;
+          },
+          stop() { queueMicrotask(() => this.onended?.()); },
+        };
+      }
+      createGain() {
+        return { connect() {}, disconnect() {}, gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} } };
+      }
+    } });
+  });
+  const pings = () => page.evaluate(() => window.turnAudio.pings);
+  const initial = await createTable(page, 'Turn sound table', 2);
+  const guestContext = await browser.newContext();
+  const guest = await guestContext.newPage();
+  try {
+    await guestJoin(guest, initial.code, 'Leo');
+    await buyIn(guest);
+    await page.getByRole('button', { name: 'Approve Leo' }).click();
+    await expect(guest.locator('.bankroll-main strong').first()).toContainText('10,000');
+    await page.getByRole('button', { name: 'Deal first hand' }).click();
+    await expect(page.locator('.turn-heading')).toHaveText('YOUR MOVE');
+    expect(await pings()).toBe(0);
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    await expect.poll(pings).toBe(1);
+    await serverCommand(page, initial.id, { type: 'chat', message: 'Same turn, new snapshot' });
+    await page.getByRole('button', { name: 'Mute turn sounds' }).click();
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    expect(await pings()).toBe(1);
+
+    await checkAction(page, initial.id);
+    await checkAction(guest, initial.id);
+    await page.evaluate(() => window.turnAudio.suspend());
+    await checkAction(guest, initial.id);
+    await expect.poll(pings).toBe(2);
+    expect(await page.evaluate(() => window.turnAudio.resumes)).toBeGreaterThan(2);
+
+    await checkAction(page, initial.id);
+    await page.evaluate(() => {
+      const probe = window.turnAudio;
+      probe.suspend(); probe.blocked = true;
+    });
+    await checkAction(guest, initial.id);
+    await expect(page.locator('.turn-heading')).toHaveText('YOUR MOVE');
+    expect(await pings()).toBe(2);
+    await serverCommand(page, initial.id, { type: 'act', action: 'check' });
+    await expect(page.locator('.turn-heading')).not.toHaveText('YOUR MOVE');
+    await page.evaluate(() => window.turnAudio.release());
+    expect(await pings()).toBe(2);
+    await checkAction(guest, initial.id);
+    await expect.poll(pings).toBe(3);
+
+    await page.getByRole('button', { name: 'Mute turn sounds' }).click();
+    await page.evaluate(() => { window.turnAudio.rejectNext = true; });
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    await expect(page.getByRole('alert')).toContainText('Your browser could not enable sound');
+    await expect(page.getByRole('button', { name: 'Enable turn sounds' })).toBeVisible();
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    await expect(page.getByRole('button', { name: 'Mute turn sounds' })).toBeVisible();
+    expect(await pings()).toBe(3);
+
+    await checkAction(page, initial.id);
+    await serverCommand(page, initial.id, { type: 'deal' });
+    await page.evaluate(() => { window.turnAudio.suspend(); window.turnAudio.blocked = true; });
+    await checkAction(guest, initial.id);
+    await expect(page.locator('.turn-heading')).toHaveText('YOUR MOVE');
+    expect(await pings()).toBe(3);
+    await page.getByRole('button', { name: 'Mute turn sounds' }).click();
+    await page.evaluate(() => window.turnAudio.release());
+    expect(await pings()).toBe(3);
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    await expect.poll(pings).toBe(4);
+
+    await page.evaluate(() => {
+      window.turnAudio.suspend();
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(await pings()).toBe(4);
+    await checkAction(page, initial.id);
+    await expect.poll(pings).toBe(5);
+    expect(errors).toEqual([]);
+  } finally { await guestContext.close(); }
+});
+
+test('turn sounds resume a real Chromium audio context before scheduling the next ping', async ({ page, browser }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    const NativeAudioContext = window.AudioContext;
+    window.turnAudioPings = 0;
+    window.AudioContext = class extends NativeAudioContext {
+      constructor() { super(); window.turnAudioContext = this; }
+      override createOscillator() {
+        const oscillator = super.createOscillator();
+        const start = oscillator.start.bind(oscillator);
+        oscillator.start = (when?: number) => {
+          if (this.state !== 'running') throw new Error('Turn ping scheduled before audio resumed');
+          start(when); window.turnAudioPings++;
+        };
+        return oscillator;
+      }
+    };
+  });
+  const pings = () => page.evaluate(() => window.turnAudioPings);
+  const initial = await createTable(page, 'Native turn sound table', 2);
+  const guestContext = await browser.newContext();
+  const guest = await guestContext.newPage();
+  try {
+    await guestJoin(guest, initial.code, 'Leo');
+    await buyIn(guest);
+    await page.getByRole('button', { name: 'Approve Leo' }).click();
+    await expect(guest.locator('.bankroll-main strong').first()).toContainText('10,000');
+    await page.getByRole('button', { name: 'Enable turn sounds' }).click();
+    await expect.poll(() => page.evaluate(() => window.turnAudioContext.state)).toBe('running');
+    await page.getByRole('button', { name: 'Deal first hand' }).click();
+    await expect.poll(pings).toBe(1);
+    await checkAction(page, initial.id);
+    await checkAction(guest, initial.id);
+    await page.evaluate(() => window.turnAudioContext.suspend());
+    await checkAction(guest, initial.id);
+    await expect.poll(pings).toBe(2);
+    await expect.poll(() => page.evaluate(() => window.turnAudioContext.state)).toBe('running');
+    expect(errors).toEqual([]);
+  } finally { await guestContext.close(); }
+});
+
 test('two independent players can play, reconnect, rebuy, cash out, and reconcile a finished session', async ({ page, browser }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));

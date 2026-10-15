@@ -36,6 +36,8 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   expired.current = onSessionExpired;
   const lastTurn = useRef('');
   const audio = useRef<AudioContext | null>(null);
+  const soundEnabled = useRef(false);
+  const currentTurn = useRef('');
   const chatEnd = useRef<HTMLDivElement>(null);
   const requestStates = useRef(new Map(initialRoom.requests.map(request => [request.id, request.status])));
   const emoteSocket = useRef<Socket | null>(null);
@@ -86,6 +88,8 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const displayedAnte = handAnte(displayedRules, room.settings);
   const legacyIndian = !!hand && isLegacyIndianHand(hand);
   const legal = room.legal;
+  const turnKey = hand?.actorId === user.id && legal.canAct ? `${hand.id}:${hand.street}:${hand.turnStartedAt}` : '';
+  currentTurn.current = turnKey;
   const open = room.status === 'open';
   const pending = room.requests.filter(request => request.status === 'pending');
   const ownRequest = room.requests.find(request => request.playerId === user.id && ['pending', 'approved'].includes(request.status));
@@ -110,18 +114,49 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const canDeal = room.players.filter(player => player.seat !== null && !player.sittingOut && player.stack > 0).length >= 2;
   useEffect(() => { setAmount(Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, room.settings.bigBlind * 3))); },
     [hand?.id, hand?.street, hand?.currentBet, hero.stack, room.settings.bigBlind, legal.minRaiseTo, legal.maxRaiseTo]);
-  useEffect(() => {
-    const key = hand?.actorId === user.id && legal.canAct ? `${hand.id}:${hand.turnStartedAt}` : '';
-    if (key && lastTurn.current !== key && sound && audio.current) {
-      const oscillator = audio.current.createOscillator(); const gain = audio.current.createGain();
-      oscillator.connect(gain); gain.connect(audio.current.destination);
-      oscillator.frequency.value = 640; gain.gain.setValueAtTime(0.035, audio.current.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, audio.current.currentTime + 0.22);
-      oscillator.start(); oscillator.stop(audio.current.currentTime + 0.22);
+  const playTurnSound = useCallback(async () => {
+    const context = audio.current;
+    const key = currentTurn.current;
+    if (!soundEnabled.current || !context) return;
+    if (context.state === 'running' && (!key || lastTurn.current === key)) return;
+    try {
+      if (context.state !== 'running') await context.resume();
+      if (audio.current !== context || !soundEnabled.current || !key || currentTurn.current !== key ||
+        lastTurn.current === key || context.state !== 'running') return;
+      const oscillator = context.createOscillator(); const gain = context.createGain();
+      oscillator.connect(gain); gain.connect(context.destination);
+      oscillator.frequency.value = 640; gain.gain.setValueAtTime(0.035, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.22);
+      oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
+      oscillator.start(); oscillator.stop(context.currentTime + 0.22);
+      lastTurn.current = key;
+    } catch {
+      if (audio.current !== context || !soundEnabled.current || currentTurn.current !== key) return;
+      soundEnabled.current = false; setSound(false);
+      setError('Your browser could not play the turn sound. Tap Enable turn sounds to try again.');
     }
-    lastTurn.current = key;
-  }, [hand?.actorId, hand?.turnStartedAt, legal.canAct, sound, user.id]);
-  useEffect(() => () => { void audio.current?.close(); }, []);
+  }, []);
+  useEffect(() => { if (sound) void playTurnSound(); }, [turnKey, sound, playTurnSound]);
+  useEffect(() => {
+    const recover = () => {
+      if (audio.current?.state !== 'running') void playTurnSound();
+    };
+    const visible = () => { if (document.visibilityState === 'visible') void playTurnSound(); };
+    document.addEventListener('pointerdown', recover);
+    document.addEventListener('keydown', recover);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      document.removeEventListener('pointerdown', recover);
+      document.removeEventListener('keydown', recover);
+      document.removeEventListener('visibilitychange', visible);
+      const context = audio.current;
+      audio.current = null; soundEnabled.current = false;
+      if (context) {
+        context.onstatechange = null;
+        void context.close().catch(reason => console.error('Unable to close turn audio:', reason));
+      }
+    };
+  }, [playTurnSound]);
 
   async function command(value: Command): Promise<boolean> {
     if (sending.current) return false;
@@ -155,11 +190,23 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const disable = busy || !connected || !open;
   const openEmoji = useCallback(() => { setError(''); setModal('emoji'); }, []);
   function soundToggle() {
-    if (!sound) {
-      audio.current ??= new AudioContext();
-      void audio.current.resume().catch(() => setError('Your browser could not enable sound.'));
+    if (soundEnabled.current) {
+      soundEnabled.current = false; setSound(false);
+      return;
     }
-    setSound(!sound);
+    try {
+      const context = audio.current ??= new AudioContext();
+      context.onstatechange = () => { if (context.state === 'running') void playTurnSound(); };
+      soundEnabled.current = true; setSound(true);
+      void context.resume().then(() => playTurnSound()).catch(() => {
+        if (audio.current !== context || !soundEnabled.current) return;
+        soundEnabled.current = false; setSound(false);
+        setError('Your browser could not enable sound. Tap Enable turn sounds to try again.');
+      });
+    } catch {
+      soundEnabled.current = false; setSound(false);
+      setError('Your browser could not enable sound. Tap Enable turn sounds to try again.');
+    }
   }
   const cashValue = hero.stack * room.settings.chipValueCents;
   const errorBanner = error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={16} /></button></div>;
