@@ -1,4 +1,4 @@
-import { isLegacyIndianHand, type GameVariant, type PlayerStats, type PlayerStatsCounts, type Room } from '../shared/model.js';
+import { handGameVariant, isLegacyIndianHand, type GameVariant, type PlayerStats, type PlayerStatsCounts, type Room } from '../shared/model.js';
 import type { Queryable } from './database.js';
 import type { Transition } from './engine.js';
 
@@ -13,7 +13,7 @@ export async function recordPlayerStats(tx: Queryable, before: Room | null, resu
     await tx.query(
       `INSERT INTO rr_player_hand_stats(room_id,hand_id,user_id,game,started_at)
        SELECT $1,$2,user_id,$4,$5::timestamptz FROM unnest($3::text[]) AS players(user_id)`,
-      [room.id, hand.id, humans, hand.rules.game, new Date(hand.startedAt).toISOString()]);
+      [room.id, hand.id, humans, handGameVariant(hand.rules), new Date(hand.startedAt).toISOString()]);
   }
   if (!newHand && previous && previous.street !== 'complete' && events.some(event => event.kind === 'action' && event.actorId === actorId)) {
     const preflop = previous.street === 'preflop';

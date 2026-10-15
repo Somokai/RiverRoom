@@ -10,7 +10,7 @@ import { parseArgs } from 'node:util';
 import { io, type Socket } from 'socket.io-client';
 import { chooseBotAction } from '../server/bot.js';
 import {
-  DEFAULT_SETTINGS, GAME_LABELS, defaultHandRules, isLegacyIndianHand, presetRaise,
+  DEFAULT_SETTINGS, GAME_LABELS, defaultHandRules, isIndian, isLegacyIndianHand, isOmaha, presetRaise, supportsSevenDeuce,
   type Command, type GameVariant, type HandHistory, type Identity, type LedgerRow, type RoomView, type RunoutCount,
 } from '../shared/model.js';
 
@@ -63,9 +63,9 @@ export function optionsFrom(args: string[]): RunOptions {
 export function assertPrivateView(room: RoomView, userId: string) {
   assert.equal(room.youId, userId, 'A player received another identity\'s room view.');
   const hand = room.hand;
-  const indian = hand?.rules.game === 'indian';
+  const indian = !!hand && isIndian(hand.rules);
   const legacyIndian = !!hand && isLegacyIndianHand(hand);
-  const cardCount = legacyIndian ? 1 : hand?.rules.game === 'omaha' || hand?.rules.game === 'omaha_bomb' ? 4 : 2;
+  const cardCount = legacyIndian ? 1 : hand && isOmaha(hand.rules) ? 4 : 2;
   if (room.hand) {
     for (const field of ['deck', 'burned', 'holeCards']) assert(!Object.hasOwn(room.hand, field), `Private ${field} was sent to a client.`);
     assert.deepEqual(room.hand.board, room.hand.boards[0] ?? [], 'The first-board projection disagrees with the canonical boards.');
@@ -79,7 +79,7 @@ export function assertPrivateView(room: RoomView, userId: string) {
       }
     }
     if (room.hand.bounty) {
-      assert.equal(room.hand.rules.game, 'holdem', 'A non-Holdem hand awarded a 7-2 bounty.');
+      assert(supportsSevenDeuce(room.hand.rules), 'An ineligible hand awarded a 7-2 bounty.');
       const cards = room.hand.revealed[room.hand.bounty.winnerId];
       assert(cards?.length === 2 && cards.map(card => card[0]).sort().join('') === '27' && cards[0]![1] !== cards[1]![1],
         'A bounty winner did not show seven-deuce offsuit.');

@@ -11,6 +11,9 @@ export const emoteSchema = z.object({
 const amount = z.number().int().min(1).max(10_000_000);
 export const handRulesSchema = z.object({
   game: z.enum(['holdem', 'omaha', 'omaha_bomb', 'indian']),
+  doubleBoard: z.boolean().optional(),
+  bombPot: z.boolean().optional(),
+  indian: z.boolean().optional(),
   bombAnte: amount,
   indianAnte: amount,
   omahaAnte: amount,

@@ -278,13 +278,15 @@ test('future-game selection stays queued and cannot change active cards or rules
   const state = await openFixture(page, baseURL!);
   const activeRules = structuredClone(state.room.hand!.rules);
   await page.getByRole('button', { name: 'Choose next hand', exact: true }).click();
-  await expect(page.getByLabel('Game for future hands')).toBeFocused();
-  await page.getByLabel('Game for future hands').selectOption('omaha_bomb');
+  await expect(page.getByLabel('PLO (four cards, pot limit)', { exact: true })).toBeFocused();
+  await page.getByLabel('PLO (four cards, pot limit)', { exact: true }).check();
+  await page.getByLabel('Double board', { exact: true }).check();
+  await page.getByLabel('Bomb pot', { exact: true }).check();
   await page.getByLabel('Bomb ante (chips per player)').fill('75');
   await page.getByLabel('All-in runout consent').selectOption('3');
   await page.getByRole('button', { name: 'Save next-hand rules', exact: true }).click();
   await expect(page.locator('.queued-hand-rules')).toContainText('Double-board PLO bomb pot');
-  await expect(page.locator('.queued-hand-rules')).toContainText('75 ante');
+  await expect(page.locator('.queued-hand-rules')).toContainText('75 round ante');
   await expect(page.locator('.active-hand-rules')).toContainText("Texas Hold'em");
   await expect(page.locator('.hero-seat .playing-card')).toHaveCount(2);
   expect(state.room.hand!.rules).toEqual(activeRules);
@@ -292,7 +294,10 @@ test('future-game selection stays queued and cannot change active cards or rules
   await page.reload();
   await expect(page.locator('.queued-hand-rules')).toContainText('Double-board PLO bomb pot');
   await page.getByRole('button', { name: 'Choose next hand', exact: true }).click();
-  await page.getByLabel('Game for future hands').selectOption('indian');
+  await page.getByLabel('PLO (four cards, pot limit)', { exact: true }).uncheck();
+  await page.getByLabel('Double board', { exact: true }).uncheck();
+  await page.getByLabel('Bomb pot', { exact: true }).uncheck();
+  await page.getByLabel('Indian (face-out cards)', { exact: true }).check();
   await page.getByLabel('Indian round buy-in (ante per player)').fill('0');
   await expect(page.getByRole('button', { name: 'Save next-hand rules', exact: true })).toBeDisabled();
   await page.getByLabel('Indian round buy-in (ante per player)').fill('25');
@@ -302,7 +307,8 @@ test('future-game selection stays queued and cannot change active cards or rules
   await expect(page.locator('.queued-hand-rules')).toContainText('Indian poker (two cards)');
   expect(state.commands.at(-1)).toMatchObject({ type: 'next_hand', rules: { game: 'indian', indianAnte: 25, maxRunouts: 3 } });
   await page.getByRole('button', { name: 'Choose next hand', exact: true }).click();
-  await page.getByLabel('Game for future hands').selectOption('omaha');
+  await page.getByLabel('Indian (face-out cards)', { exact: true }).uncheck();
+  await page.getByLabel('PLO (four cards, pot limit)', { exact: true }).check();
   await page.getByLabel('PLO round buy-in (ante per player)').fill('0');
   await expect(page.getByRole('button', { name: 'Save next-hand rules', exact: true })).toBeDisabled();
   await page.getByLabel('PLO round buy-in (ante per player)').fill('35');
@@ -517,7 +523,7 @@ test('real three-player Indian hand posts configured antes, reveals a fold immed
     await page.goto(`/?table=${room.id}`);
     await expect(page.locator('.game-nav-center')).toHaveText('LIVE TABLE');
     await page.getByRole('button', { name: 'Choose next hand', exact: true }).click();
-    await page.getByLabel('Game for future hands').selectOption('indian');
+    await page.getByLabel('Indian (face-out cards)', { exact: true }).check();
     await page.getByLabel('Indian round buy-in (ante per player)').fill('25');
     await page.getByLabel('All-in runout consent').selectOption('3');
     await page.getByRole('button', { name: 'Save next-hand rules', exact: true }).click();
@@ -804,7 +810,7 @@ test('real two-player PLO uses the 500 minimum, pot caps and unanimous up-to run
     await expect(guest.locator('.bankroll-main > div > strong')).toContainText('500');
 
     await page.getByRole('button', { name: 'Choose next hand', exact: true }).click();
-    await page.getByLabel('Game for future hands').selectOption('omaha');
+    await page.getByLabel('PLO (four cards, pot limit)', { exact: true }).check();
     await page.getByLabel('PLO round buy-in (ante per player)').fill('25');
     await page.getByLabel('All-in runout consent').selectOption('3');
     await page.getByRole('button', { name: 'Save next-hand rules', exact: true }).click();

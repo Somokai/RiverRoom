@@ -3,7 +3,7 @@ import type {
   Card, ChipTransfer, Command, FundingRequest, GameEvent, Hand, HandPlayer, HandRules,
   LegalActions, Player, Room, RoomSettings, RoomView, RunoutCount,
 } from '../shared/model.js';
-import { defaultHandRules, GAME_LABELS, handAnte, isLegacyIndianHand } from '../shared/model.js';
+import { defaultHandRules, handAnte, isBombPot, isDoubleBoard, isIndian, isLegacyIndianHand, isOmaha, rulesGameLabel, supportsSevenDeuce } from '../shared/model.js';
 import { evaluate, evaluateIndian, evaluateOmaha, shuffleDeck, type HandRank } from './cards.js';
 import { normalizeRoom, ROOM_SCHEMA_VERSION } from './state.js';
 import { isPlayerEmoji } from '../shared/emoji.js';
@@ -22,7 +22,6 @@ const sessionFundingLimit = 1_000_000_000;
 const runoutChoiceMs = 20_000;
 const integer = (value: number, min = 1, max = 10_000_000) =>
   Number.isSafeInteger(value) && value >= min && value <= max;
-const isOmaha = (rules: HandRules) => rules.game === 'omaha' || rules.game === 'omaha_bomb';
 const holeCardCount = (rules: HandRules) => isOmaha(rules) ? 4 : 2;
 const sameCards = (a: Card[], b: Card[]) => a.length === b.length && a.every((card, index) => card === b[index]);
 
@@ -71,6 +70,7 @@ export function validateSettings(settings: RoomSettings) {
 
 function validateHandRules(rules: HandRules, frozen = false) {
   if (!rules || !['holdem', 'omaha', 'omaha_bomb', 'indian'].includes(rules.game) ||
+      [rules.doubleBoard, rules.bombPot, rules.indian].some(value => value !== undefined && typeof value !== 'boolean') ||
       !integer(rules.bombAnte) || !integer(rules.indianAnte) || !integer(rules.omahaAnte, frozen ? 0 : 1) ||
       !integer(rules.sevenDeuceBounty, 0) ||
       !integer(rules.maxRunouts, 1, 3))
@@ -152,7 +152,7 @@ function finishSession(room: Room, fx: Effects, ctx: Context) {
 
 function settleBounty(room: Room, hand: Hand, fx: Effects, ctx: Context) {
   const amount = hand.rules.sevenDeuceBounty;
-  if (hand.rules.game !== 'holdem' || amount === 0) return;
+  if (!supportsSevenDeuce(hand.rules) || amount === 0) return;
   const awards = hand.results.filter(result => result.amount > 0);
   const winnerId = awards[0]?.winners[0];
   if (!winnerId || awards.some(result => result.winners.length !== 1 || result.winners[0] !== winnerId)) return;
@@ -202,7 +202,7 @@ function settle(room: Room, fx: Effects, ctx: Context) {
       throw new Error('Showdown requires complete boards.');
     for (const player of alive) hand.revealed[player.id] = [...(hand.holeCards[player.id] ?? [])];
   }
-  if (hand.rules.game === 'indian')
+  if (isIndian(hand.rules))
     for (const player of hand.players) hand.revealed[player.id] = [...hand.holeCards[player.id]!];
   const levels = [...new Set(hand.players.map(player => player.committed).filter(amount => amount > 0))].sort((a, b) => a - b);
   const boardCount = Math.max(1, hand.boards.length);
@@ -409,7 +409,7 @@ function deal(room: Room, fx: Effects, ctx: Context) {
   const button = nextSeat(eligible, room.dealerSeat ?? -1);
   const rules = { ...room.nextHandRules };
   validateHandRules(rules);
-  const hasBlinds = rules.game !== 'omaha_bomb';
+  const hasBlinds = !isBombPot(rules);
   const sb = hasBlinds ? eligible.length === 2 ? button : nextSeat(eligible, button) : null;
   const bb = sb === null ? null : nextSeat(eligible, sb);
   room.dealerSeat = button;
@@ -419,7 +419,7 @@ function deal(room: Room, fx: Effects, ctx: Context) {
   if (deck.length !== 52 || new Set(deck).size !== 52 || deck.some(card => !/^[2-9TJQKA][cdhs]$/.test(card))) throw new Error('Invalid full deck.');
   const hand: Hand = {
     id: randomUUID(), number: room.handNumber, street: 'preflop', board: [], deck, burned: [], holeCards: {},
-    rules, boards: rules.game === 'omaha_bomb' ? [[], []] : [[]],
+    rules, boards: isDoubleBoard(rules) ? [[], []] : [[]],
     runoutBoards: [], runoutPrefix: null, runoutCount: 1, runoutVote: null, preflopPotAdjustment: 0, bounty: null,
     players: eligible.map(player => ({ id: player.id, seat: player.seat, committed: 0, streetBet: 0, folded: false, actedAtBet: null, lastAction: '' })),
     buttonSeat: button, smallBlindSeat: sb, bigBlindSeat: bb, currentBet: hasBlinds ? room.settings.bigBlind : 0,
@@ -433,12 +433,12 @@ function deal(room: Room, fx: Effects, ctx: Context) {
     ((b.seat - button + room.settings.maxSeats) % room.settings.maxSeats || room.settings.maxSeats));
   for (let round = 0; round < holeCardCount(rules); round++)
     for (const player of dealOrder) (hand.holeCards[player.id] ??= []).push(takeCard(hand));
-  event(fx, ctx, 'deal', `Hand #${hand.number}: ${GAME_LABELS[rules.game]}. ${eligible.find(player => player.seat === button)!.name} has the button.`);
+  event(fx, ctx, 'deal', `Hand #${hand.number}: ${rulesGameLabel(rules)}. ${eligible.find(player => player.seat === button)!.name} has the button.`);
   const ante = handAnte(rules, room.settings);
   for (const player of hand.players) if (ante) payIntoPot(room, player, ante, 'ante', fx,
-    rules.game === 'omaha_bomb' ? 'Bomb pot ante' : rules.game === 'indian' ? 'Indian poker round buy-in (ante)'
-      : rules.game === 'omaha' ? 'PLO round buy-in (ante)' : 'Ante');
-  if (ante) event(fx, ctx, 'antes_posted', `${GAME_LABELS[rules.game]}: ${ante.toLocaleString('en-US')} chips per player posted as an ante; short stacks post their remaining chips. Ante chips are in the pot, not part of a call or raise.`);
+    isBombPot(rules) ? 'Bomb pot ante' : isIndian(rules) ? 'Indian poker round buy-in (ante)'
+      : isOmaha(rules) ? 'PLO round buy-in (ante)' : 'Ante');
+  if (ante) event(fx, ctx, 'antes_posted', `${rulesGameLabel(rules)}: ${ante.toLocaleString('en-US')} chips per player posted as an ante; short stacks post their remaining chips. Ante chips are in the pot, not part of a call or raise.`);
   if (hasBlinds) {
     const smallBlind = hand.players.find(player => player.seat === sb)!;
     const bigBlind = hand.players.find(player => player.seat === bb)!;
@@ -447,7 +447,7 @@ function deal(room: Room, fx: Effects, ctx: Context) {
     hand.preflopPotAdjustment = room.settings.smallBlind - smallBlind.streetBet + room.settings.bigBlind - bigBlind.streetBet;
     event(fx, ctx, 'blinds_posted', `Blinds posted: ${room.settings.smallBlind} / ${room.settings.bigBlind}.`);
   }
-  if (rules.game === 'omaha_bomb') advanceStreet(room, fx, ctx);
+  if (isBombPot(rules)) advanceStreet(room, fx, ctx);
   else selectNextActor(room, bb ?? button, fx, ctx);
 }
 
@@ -548,7 +548,7 @@ function revealCards(room: Room, actorId: string, command: Extract<Command, { ty
 
 function assertHandCards(hand: Hand) {
   const legacyIndian = isLegacyIndianHand(hand);
-  const boardCount = legacyIndian ? 0 : hand.rules.game === 'omaha_bomb' ? 2 : 1;
+  const boardCount = legacyIndian ? 0 : isDoubleBoard(hand.rules) ? 2 : 1;
   const validLength = (length: number) => [0, 3, 4, 5].includes(length);
   const burnsAt = (length: number) => length === 0 ? 0 : length - 2;
   const validateBoards = (boards: Card[][]) => {
@@ -664,7 +664,7 @@ export function assertRoom(room: Room) {
             Object.values(result.shares).reduce((sum, amount) => sum + amount, 0) !== result.amount))
         throw new Error('Completed pot awards do not balance.');
     }
-    if (hand.bounty && (hand.rules.game !== 'holdem' || hand.street !== 'complete' ||
+    if (hand.bounty && (!supportsSevenDeuce(hand.rules) || hand.street !== 'complete' ||
         !integer(hand.bounty.amount) || hand.bounty.amount !== hand.rules.sevenDeuceBounty ||
         hand.bounty.totalAmount !== hand.bounty.amount * hand.bounty.payerIds.length ||
         new Set(hand.bounty.payerIds).size !== hand.players.length - 1 ||
@@ -713,7 +713,7 @@ export function transition(original: Room, actorId: string, command: Command, ct
       requireHost(room, actorId);
       validateHandRules(command.rules);
       room.nextHandRules = { ...command.rules };
-      event(fx, ctx, 'next_hand', `Next-hand rules selected: ${GAME_LABELS[command.rules.game]}; bomb ante ${command.rules.bombAnte}, Indian round ante ${command.rules.indianAnte}, PLO round ante ${command.rules.omahaAnte}, Hold'em 7-2 offsuit bounty ${command.rules.sevenDeuceBounty}, up to ${command.rules.maxRunouts} runout${command.rules.maxRunouts === 1 ? '' : 's'}. Current-hand rules are unchanged.`, actorId);
+      event(fx, ctx, 'next_hand', `Next-hand rules selected: ${rulesGameLabel(command.rules)}; bomb ante ${command.rules.bombAnte}, Indian round ante ${command.rules.indianAnte}, PLO round ante ${command.rules.omahaAnte}, Hold'em 7-2 offsuit bounty ${command.rules.sevenDeuceBounty}, up to ${command.rules.maxRunouts} runout${command.rules.maxRunouts === 1 ? '' : 's'}. Current-hand rules are unchanged.`, actorId);
       break;
     case 'runouts': voteRunouts(room, actorId, command, fx, ctx); break;
     case 'fund':
@@ -889,7 +889,7 @@ export function roomView(original: Room, userId: string, connected: Set<string>,
     hand: publicHand,
     players: room.players.map(player => {
       const hp = hand?.players.find(item => item.id === player.id) ?? null;
-      const visible = hand?.rules.game === 'indian'
+      const visible = hand && isIndian(hand.rules)
         ? player.id !== userId || hp?.folded || hand.street === 'complete' ? hand.holeCards[player.id] : undefined
         : player.id === userId ? hand?.holeCards[player.id]
           : hand?.holeCards[player.id]?.map(card => hand.revealed[player.id]?.includes(card) ? card : null);

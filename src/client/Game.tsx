@@ -11,7 +11,7 @@ import { useCountdown } from './clock';
 import { useMotionPreference } from './motionPreference';
 import { useEmotes } from './emotes';
 import { canPremove, resolvePremove, type Premove } from './premoves';
-import { GAME_LABELS, chips, handAnte, handGameLabel, isLegacyIndianHand, money, presetRaise, type Command, type GameVariant, type HandRules, type Identity, type RoomView, type RunoutCount } from '../shared/model';
+import { chips, handAnte, handGameLabel, handGameVariant, handModifiers, isBombPot, isDoubleBoard, isIndian, isLegacyIndianHand, isOmaha, money, presetRaise, rulesGameLabel, supportsSevenDeuce, type Command, type HandRules, type Identity, type RoomView, type RunoutCount } from '../shared/model';
 
 export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   initialRoom: RoomView; user: Identity; onHome: () => void; onSessionExpired: () => void;
@@ -245,7 +245,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
           : <span className="profile-chip"><span className="avatar small-avatar">{user.name.slice(0, 1).toUpperCase()}</span><PlayerName player={hero} /></span>}
         <button className="text-button lobby-link" onClick={onHome}><ArrowLeft size={16} /> Lobby</button></div></header>
     <main className="game-main">
-      <div className="table-title-row"><div><span className="eyebrow">{open ? 'PRIVATE CASH TABLE' : 'COMPLETED SESSION'} <span className="muted">/</span> {(hand ? handGameLabel(hand) : GAME_LABELS[displayedRules.game]).toUpperCase()}</span><h1>{room.name}{isHost && <span className="host-label"><Crown size={12} /> HOST</span>}</h1></div>
+      <div className="table-title-row"><div><span className="eyebrow">{open ? 'PRIVATE CASH TABLE' : 'COMPLETED SESSION'} <span className="muted">/</span> {(hand ? handGameLabel(hand) : rulesGameLabel(displayedRules)).toUpperCase()}</span><h1>{room.name}{isHost && <span className="host-label"><Crown size={12} /> HOST</span>}</h1></div>
         <div className="table-title-actions"><button className="button button-small button-outline" onClick={() => { setCopied(false); setModal('invite'); }}><Users size={15} /> Invite friends</button>
           {isHost && open && <button className="button button-small button-outline" aria-label="House rules" onClick={() => { setDraftSettings({ ...room.settings, ...room.pendingBlinds }); setModal('settings'); }}><Settings2 size={16} /><span className="label-hide-mobile">House rules</span></button>}</div></div>
       {errorBanner}
@@ -255,8 +255,8 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
       {ownRequest && <div className="info-banner"><HandCoins size={16} /> {chips(ownRequest.amount)} chips {ownRequest.status === 'approved' ? 'approved; they will arrive after this hand.' : 'requested. Waiting for host approval.'}</div>}
       <div className="game-columns"><section className="table-column">
         <div className="table-meta"><span><span className="tiny-dot" /> {room.players.filter(player => player.seat !== null).length}/{room.settings.maxSeats} seated</span>
-          {displayedRules.game === 'omaha_bomb' || legacyIndian
-            ? <span>{displayedRules.game === 'omaha_bomb' ? 'Bomb ante' : 'Ante'} <b>{chips(displayedAnte)}</b> / No blinds</span>
+          {isBombPot(displayedRules) || legacyIndian
+            ? <span>{isBombPot(displayedRules) ? 'Bomb ante' : 'Ante'} <b>{chips(displayedAnte)}</b> / No blinds</span>
             : <span>Blinds <b>{chips(room.settings.smallBlind)} / {chips(room.settings.bigBlind)}</b>{displayedAnte > 0 && <> <span className="middot">/</span> Ante {chips(displayedAnte)}</>}</span>}
           <span>Hand <b>#{room.handNumber.toString().padStart(3, '0')}</b></span></div>
         <PokerTable room={room} timeOffset={timeOffset} onChooseEmoji={open ? openEmoji : undefined} emojiDisabled={disable}
@@ -269,11 +269,15 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
               : activeHand ? legal.canAct ? `${chips(legal.callAmount)} to call` : hero.sittingOut ? 'You will sit out the next hand.' : 'A little patience. A good hand is worth it.' : room.nextHandAt && !room.paused && canDeal ? <NextDealClock deadline={room.nextHandAt} timeOffset={timeOffset} /> : 'Ready when you are.'}</span></div>
           {runoutVote && hand ? <RunoutDecision room={room} hand={hand} timeOffset={timeOffset} disabled={disable} error={error}
             choose={count => command({ type: 'runouts', handId: hand.id, count })} /> : activeHand ? <>
-            {hand.rules.game !== 'holdem' && <p className="variant-guidance">{hand.rules.game === 'indian'
-              ? legacyIndian ? 'This saved one-card Indian hand finishes under its original rules. New Indian deals use two cards and normal Hold\u2019em betting.'
-                : <>Your two cards are intentionally hidden from you, not a connection problem. Everyone else's cards are visible. Play normal Hold'em: blinds, preflop, flop, turn and river.
-                  {' '}{hero.hand?.folded ? 'You folded, so your own cards are now revealed to you.' : 'Your own cards are revealed when you fold or the hand ends.'}</>
-              : <><b>Exactly 2 + 3:</b> use exactly two of your four private cards and three from one board.{hand.rules.game === 'omaha_bomb' && ' Two flops are dealt immediately after the bomb ante; no preflop betting or blinds. Each board awards its own share.'}</>}</p>}
+            {(isIndian(hand.rules) || isOmaha(hand.rules) || isBombPot(hand.rules) || isDoubleBoard(hand.rules)) && <p className="variant-guidance">
+              {legacyIndian ? 'This saved one-card Indian hand finishes under its original rules. New Indian deals use two cards and normal Hold\u2019em betting.' : <>
+                {isIndian(hand.rules) && <>Your {isOmaha(hand.rules) ? 'four' : 'two'} cards are intentionally hidden from you, not a connection problem. Everyone else's cards are visible.
+                  {' '}{hero.hand?.folded ? 'You folded, so your own cards are now revealed to you.' : 'Your own cards are revealed when you fold or the hand ends.'}{' '}</>}
+                {isOmaha(hand.rules) && <><b>Exactly 2 + 3:</b> use exactly two of your four hole cards and three from one board.{' '}</>}
+                {isBombPot(hand.rules) && <>The {isDoubleBoard(hand.rules) ? 'two flops are' : 'flop is'} dealt immediately after the bomb ante; no preflop betting or blinds.{' '}</>}
+                {isDoubleBoard(hand.rules) && 'Each board awards its own share.'}
+              </>}
+            </p>}
             <div className="bet-sizing"><div className="presets"><span className="preset-label">POT</span>{[0.5, 0.75, 1].map((fraction, index) => <button key={fraction} aria-label={['Half pot', 'Three-quarter pot', 'Full pot'][index]}
               disabled={disable || !legal.canRaise} className="preset-button" onClick={() => setAmount(presetRaise(legal, hero.hand?.streetBet ?? 0, room.settings.bigBlind, { pot: fraction }))}>{['\u00bd', '\u00be', '1\u00d7'][index]}</button>)}
               <span className="preset-divider" /><span className="preset-label">BB</span>{[2, 2.5, 3, 4].map(multiplier => <button key={multiplier} disabled={disable || !legal.canRaise} className={`preset-button ${amount === multiplier * room.settings.bigBlind ? 'preset-selected' : ''}`}
@@ -491,10 +495,10 @@ function NextHandPanel({ room, disabled, error, save }: {
   const [draft, setDraft] = useState<HandRules>({ ...room.nextHandRules });
   const [failed, setFailed] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
-  const gameSelect = useRef<HTMLSelectElement>(null);
+  const firstAttribute = useRef<HTMLInputElement>(null);
   const wasExpanded = useRef(false);
   useEffect(() => {
-    if (expanded) gameSelect.current?.focus();
+    if (expanded) firstAttribute.current?.focus();
     else if (wasExpanded.current) toggle.current?.focus();
     wasExpanded.current = expanded;
   }, [expanded]);
@@ -519,29 +523,37 @@ function NextHandPanel({ room, disabled, error, save }: {
         <strong>{room.hand ? handGameLabel(room.hand) : 'Waiting for the first deal'}</strong>
         <span>{room.hand ? ruleSummary(room.hand.rules, isLegacyIndianHand(room.hand)) : 'The queued rules apply when the host deals.'}</span></div>
       <div className="queued-hand-rules"><small>{room.status === 'closed' ? 'LAST QUEUED SELECTION' : 'QUEUED · NEXT DEAL & EVERY DEAL AFTER'}</small>
-        <strong>{GAME_LABELS[room.nextHandRules.game]}</strong><span>{ruleSummary(room.nextHandRules)}</span></div>
+        <strong>{rulesGameLabel(room.nextHandRules)}</strong><span>{ruleSummary(room.nextHandRules)}</span></div>
     </div>
     <p className="next-hand-explainer">Changes affect future deals only, never the hand already in play. The queued selection stays until the host changes it.</p>
     {editing && <form id="next-hand-editor" aria-label="Next-hand rules" onSubmit={event => {
       event.preventDefault();
       if (!valid || disabled) return;
       setFailed(false);
-      void save(draft).then(ok => { if (ok) setExpanded(false); else setFailed(true); });
+      void save({ ...draft, ...handModifiers(draft), game: handGameVariant(draft) })
+        .then(ok => { if (ok) setExpanded(false); else setFailed(true); });
     }}>
       {failed && <div className="error-banner" role="alert">{error || 'The next-hand selection was not saved. Please try again.'}</div>}
+      <fieldset className="hand-attributes"><legend>Hand attributes (combine any)</legend>
+        <label className="checkbox"><input ref={firstAttribute} type="checkbox" checked={isOmaha(draft)}
+          onChange={event => setDraft({ ...draft, ...handModifiers(draft), game: event.target.checked ? 'omaha' : 'holdem',
+            sevenDeuceBounty: event.target.checked ? 0 : draft.sevenDeuceBounty })} /> PLO (four cards, pot limit)</label>
+        <label className="checkbox"><input type="checkbox" checked={isDoubleBoard(draft)}
+          onChange={event => setDraft({ ...draft, doubleBoard: event.target.checked })} /> Double board</label>
+        <label className="checkbox"><input type="checkbox" checked={isBombPot(draft)}
+          onChange={event => setDraft({ ...draft, bombPot: event.target.checked })} /> Bomb pot</label>
+        <label className="checkbox"><input type="checkbox" checked={isIndian(draft)}
+          onChange={event => setDraft({ ...draft, indian: event.target.checked,
+            sevenDeuceBounty: event.target.checked ? 0 : draft.sevenDeuceBounty })} /> Indian (face-out cards)</label>
+      </fieldset>
       <div className="field-grid">
-        <label className="field next-game-field"><span>Game for future hands</span><select ref={gameSelect} value={draft.game}
-          onChange={event => {
-            const game = event.target.value as GameVariant;
-            setDraft({ ...draft, game, sevenDeuceBounty: game === 'holdem' ? draft.sevenDeuceBounty : 0 });
-          }}>{Object.entries(GAME_LABELS).map(([game, label]) => <option value={game} key={game}>{label}</option>)}</select></label>
-        {draft.game === 'omaha_bomb' && <Numeric label="Bomb ante (chips per player)" value={draft.bombAnte} min={1}
-          onChange={bombAnte => setDraft({ ...draft, bombAnte })} hint="Ante only; both flops are dealt immediately. No blinds or preflop betting." />}
-        {draft.game === 'indian' && <Numeric label="Indian round buy-in (ante per player)" value={draft.indianAnte} min={1}
+        {isBombPot(draft) && <Numeric label="Bomb ante (chips per player)" value={draft.bombAnte} min={1}
+          onChange={bombAnte => setDraft({ ...draft, bombAnte })} hint="Ante only; the flop is dealt immediately on each board. No blinds or preflop betting." />}
+        {!isBombPot(draft) && isIndian(draft) && <Numeric label="Indian round buy-in (ante per player)" value={draft.indianAnte} min={1}
           onChange={indianAnte => setDraft({ ...draft, indianAnte })} hint="Mandatory each hand, from existing chips, before normal blinds. Replaces the regular table ante." />}
-        {draft.game === 'omaha' && <Numeric label="PLO round buy-in (ante per player)" value={draft.omahaAnte} min={1}
+        {!isBombPot(draft) && !isIndian(draft) && isOmaha(draft) && <Numeric label="PLO round buy-in (ante per player)" value={draft.omahaAnte} min={1}
           onChange={omahaAnte => setDraft({ ...draft, omahaAnte })} hint="Mandatory each hand, from existing chips, before normal blinds. Counts toward the pot limit; replaces the regular table ante." />}
-        {draft.game === 'holdem' && <Numeric label="7/2 offsuit bounty (chips per opponent)" value={draft.sevenDeuceBounty}
+        {supportsSevenDeuce(draft) && <Numeric label="7/2 offsuit bounty (chips per opponent)" value={draft.sevenDeuceBounty}
           onChange={sevenDeuceBounty => setDraft({ ...draft, sevenDeuceBounty })} hint="0 disables. Separate off-table settlement, never taken from a stack." />}
         <label className="field"><span>All-in runout consent</span><select value={draft.maxRunouts}
           onChange={event => setDraft({ ...draft, maxRunouts: Number(event.target.value) as RunoutCount })}>
@@ -553,16 +565,16 @@ function NextHandPanel({ room, disabled, error, save }: {
     </form>}
     <div className="mixed-house-rules" aria-label={editing ? 'Draft game house rules' : 'Queued game house rules'}>
       <strong>{editing ? 'DRAFT HOUSE RULES' : 'QUEUED HOUSE RULES'}</strong>
-      {rules.game === 'holdem' ? <p>Texas Hold'em: two private cards, no-limit betting.
-        {rules.sevenDeuceBounty > 0 ? <> A sole winner of the entire hand with 7/2 offsuit is owed {chips(rules.sevenDeuceBounty)} chips equivalent by <b>each other dealt-in player</b>.
+      {isOmaha(rules) ? <p>Four hole cards. Use <b>exactly two hole cards and three cards from one board</b>.
+        {' '}Betting is pot limit; a full-stack all-in must fit that limit. The 7/2 bounty is Hold'em-only.</p>
+        : <p>Texas Hold'em: two hole cards, no-limit betting. Best five-card poker hand wins, using any combination of hole and board cards.
+        {supportsSevenDeuce(rules) && (rules.sevenDeuceBounty > 0 ? <> A sole winner of the entire hand with 7/2 offsuit is owed {chips(rules.sevenDeuceBounty)} chips equivalent by <b>each other dealt-in player</b>.
           {' '}Split or partial wins do not qualify. The winning 7/2 is shown even when everyone folds. The bonus is off-table; no stacks change and no payment is collected.</>
-          : ' The 7/2 offsuit bounty is off.'}</p>
-        : rules.game === 'indian' ? <p>Two-card Indian Hold'em: everyone else can see both of your cards, but you cannot until you fold or the hand ends.
-          {' '}Normal no-limit Hold'em blinds and preflop, flop, turn and river betting. Best five-card poker hand wins, using any combination of hole and board cards.</p>
-          : <p>Four private cards. Use <b>exactly two private cards and three cards from one board</b>.
-            {rules.game === 'omaha_bomb' && ' Each player posts the bomb ante; two flops are dealt immediately, with no blinds or preflop betting. Each board awards a separate share.'}
-            {' '}Betting is pot limit; a full-stack all-in must fit that limit. The 7/2 bounty is Hold'em-only.</p>}
-      {(rules.game === 'indian' || rules.game === 'omaha') && <p>Mandatory round buy-in: <b>{chips(rules.game === 'indian' ? rules.indianAnte : rules.omahaAnte)} chips per dealt-in player</b>,
+          : ' The 7/2 offsuit bounty is off.')}</p>}
+      {isIndian(rules) && <p>Everyone else can see all of your hole cards, but you cannot until you fold or the hand ends. Indian visibility combines with either two-card Hold'em or four-card PLO.</p>}
+      {isDoubleBoard(rules) && <p>Two community boards share the pot equally, including every side pot. Each board is evaluated separately; odd chips go to the first board.</p>}
+      {isBombPot(rules) && <p>Each player posts the bomb ante of <b>{chips(rules.bombAnte)} chips</b> from their existing stack. A flop is dealt on each board immediately, with no blinds or preflop betting. Short stacks post their remaining chips.</p>}
+      {!isBombPot(rules) && (isIndian(rules) || isOmaha(rules)) && <p>Mandatory round buy-in: <b>{chips(isIndian(rules) ? rules.indianAnte : rules.omahaAnte)} chips per dealt-in player</b>,
         {' '}posted automatically as an ante from existing stacks, in addition to blinds. It replaces the regular table ante, never buys extra chips, and does not count toward calling a bet.
         {' '}A short stack posts its remaining chips and is all-in. Table buy-in limits remain separate.</p>}
       <p>{rules.maxRunouts === 1 ? 'Run once: normal dealing, without a runout vote.' : `After betting is over due to all-ins, eligible players may consent to up to ${rules.maxRunouts} runs. Lowest choice wins; missing choices after 20 seconds mean once. Deck capacity may lower the maximum.`}</p>

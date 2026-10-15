@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  DEFAULT_SETTINGS, defaultHandRules,
+  DEFAULT_SETTINGS, defaultHandRules, handAnte, handModifiers, rulesGameLabel,
   type Card, type ChipTransfer, type Command, type GameVariant, type HandHistory,
   type HandRules, type Room, type RoomSettings,
 } from '../src/shared/model';
@@ -8,6 +8,8 @@ import { evaluateIndian, evaluateOmaha } from '../src/server/cards';
 import { createRoom, legalActions, roomView, transition, type Transition } from '../src/server/engine';
 import { normalizeHistory, normalizeRoom } from '../src/server/state';
 import { commandSchema, settingsSchema } from '../src/server/validation';
+import { chooseBotAction } from '../src/server/bot';
+import { verifyTransfers } from '../src/server/store';
 
 const PACK = [...'23456789TJQKA'].flatMap(rank => [...'cdhs'].map(suit => rank + suit));
 const cards = (text: string) => text.split(' ');
@@ -193,6 +195,122 @@ function shuffled(seed: number) {
   }
   return deck;
 }
+
+describe('independent hand attributes', () => {
+  const combinations = Array.from({ length: 16 }, (_, mask) => ({
+    game: mask & 1 ? 'omaha' as const : 'holdem' as const,
+    doubleBoard: !!(mask & 2), bombPot: !!(mask & 4), indian: !!(mask & 8),
+  }));
+
+  test.each(combinations)('deals, projects, freezes and settles $game / double=$doubleBoard bomb=$bombPot indian=$indian', attributes => {
+    const table = new Table([1000, 1000, 1000], { ante: 7 });
+    table.rules(attributes.game, { ...attributes, bombAnte: 17, indianAnte: 11, omahaAnte: 13 });
+    const omaha = attributes.game === 'omaha';
+    const holes = omaha
+      ? [cards('As Ad 7c 8c'), cards('Ks Kd 7d 8d'), cards('Qs Qd 7h 8h')]
+      : [cards('As Ad'), cards('Ks Kd'), cards('Qs Qd')];
+    const boards = [cards('Ac 2h 3h 4d 9c'), cards('Kh 2s 3s 4c 9d')].slice(0, attributes.doubleBoard ? 2 : 1);
+    const before = table.room;
+    const dealt = table.deal(boardDeck(holes, boards));
+    verifyTransfers(before, table.room, dealt.transfers);
+    const hand = table.room.hand!;
+    const ante = attributes.bombPot ? 17 : attributes.indian ? 11 : omaha ? 13 : 7;
+    expect(handAnte(hand.rules, table.room.settings)).toBe(ante);
+    expect(hand.street).toBe(attributes.bombPot ? 'flop' : 'preflop');
+    expect(hand.boards).toHaveLength(boards.length);
+    expect(hand.boards.every(board => board.length === (attributes.bombPot ? 3 : 0))).toBe(true);
+    expect(dealt.transfers.filter(entry => entry.kind === 'ante').map(entry => entry.chips)).toEqual([ante, ante, ante]);
+    expect(dealt.transfers.filter(entry => entry.kind === 'blind')).toHaveLength(attributes.bombPot ? 0 : 2);
+    expect(hand.smallBlindSeat === null).toBe(attributes.bombPot);
+    expect(hand.bigBlindSeat === null).toBe(attributes.bombPot);
+    expect(hand.pot).toBe(ante * 3 + (attributes.bombPot ? 0 : 30));
+    expect(legalActions(table.room, hand.actorId!).bettingLimit).toBe(omaha ? 'pot_limit' : 'no_limit');
+    for (const id of ['p0', 'p1', 'p2']) {
+      const view = roomView(table.room, id, new Set());
+      expect(view.hand).not.toHaveProperty('deck');
+      expect(view.hand).not.toHaveProperty('burned');
+      expect(view.hand).not.toHaveProperty('holeCards');
+      for (const [index, member] of view.players.entries())
+        expect(member.cards).toEqual(attributes.indian === (member.id === id)
+          ? Array(omaha ? 4 : 2).fill(null) : holes[index]);
+    }
+    const actorView = roomView(table.room, hand.actorId!, new Set());
+    expect(() => chooseBotAction(actorView, () => 0.5)).not.toThrow();
+    table.rules('holdem');
+    expect(table.room.hand!.rules).toEqual(hand.rules);
+    expect(table.room.hand!.holeCards).toEqual(hand.holeCards);
+    table.finish();
+    const pot = 3 * (ante + (attributes.bombPot ? 0 : 20));
+    expect(table.room.hand!.awardedPot).toBe(pot);
+    expect(table.room.hand!.results.map(result => result.winners)).toEqual(attributes.doubleBoard ? [['p0'], ['p1']] : [['p0']]);
+    expect(table.room.hand!.results.map(result => result.amount)).toEqual(attributes.doubleBoard ? [Math.ceil(pot / 2), Math.floor(pot / 2)] : [pot]);
+    expect(table.room.hand!.boards).toEqual(boards);
+    physicalCards(table.room);
+    ledgerBalances(table);
+    table.deal();
+    expect(table.room.hand!.rules.game).toBe('holdem');
+    expect(table.room.hand!.boards).toEqual([[]]);
+    expect(table.room.hand!.street).toBe('preflop');
+  });
+
+  test('explicit false overrides legacy preset attributes, and invalid attribute values fail both boundaries', () => {
+    const table = new Table();
+    table.rules('omaha_bomb', { doubleBoard: false, bombPot: false, indian: true });
+    table.deal();
+    expect(table.room.hand).toMatchObject({ boards: [[]], street: 'preflop' });
+    expect(table.room.hand!.holeCards.p0).toHaveLength(4);
+    expect(roomView(table.room, 'p0', new Set()).players[0]!.cards).toEqual([null, null, null, null]);
+    expect(handModifiers(table.room.hand!.rules)).toEqual({ doubleBoard: false, bombPot: false, indian: true });
+    expect(rulesGameLabel(table.room.hand!.rules)).toBe('Indian pot-limit Omaha');
+    for (const field of ['doubleBoard', 'bombPot', 'indian']) {
+      const invalid = { ...defaultHandRules(), [field]: 'true' };
+      expect(commandSchema.safeParse({ type: 'next_hand', rules: invalid }).success).toBe(false);
+      expect(() => table.rules('holdem', invalid as unknown as HandRules)).toThrow('valid game');
+    }
+  });
+
+  test.each(combinations)('nine-seat all-ins respect deck capacity for $game / double=$doubleBoard bomb=$bombPot indian=$indian', attributes => {
+    const table = new Table(Array(9).fill(1), { ante: 1 });
+    table.rules(attributes.game, { ...attributes, bombAnte: 1, indianAnte: 1, omahaAnte: 1, maxRunouts: 3 });
+    table.deal();
+    const maxRuns = attributes.game === 'omaha' ? attributes.doubleBoard ? 1 : attributes.bombPot ? 3 : 2
+      : attributes.doubleBoard && !attributes.bombPot ? 2 : 3;
+    if (maxRuns > 1) {
+      expect(table.room.hand!.runoutVote!.maxRuns).toBe(maxRuns);
+      for (const id of [...table.room.hand!.runoutVote!.eligible])
+        table.send(id, { type: 'runouts', handId: table.room.hand!.id, count: maxRuns as 1 | 2 | 3 });
+    }
+    const hand = table.room.hand!;
+    expect(hand.street).toBe('complete');
+    expect(hand.runoutCount).toBe(maxRuns);
+    expect(hand.runoutBoards.every(run => run.length === (attributes.doubleBoard ? 2 : 1) && run.every(board => board.length === 5))).toBe(true);
+    const prefix = hand.runoutPrefix ?? hand.boards.map(() => []);
+    const dealtCards = [
+      ...Object.values(hand.holeCards).flat(), ...hand.burned, ...hand.deck, ...prefix.flat(),
+      ...hand.runoutBoards.flatMap(run => run.flatMap((board, index) => board.slice(prefix[index]!.length))),
+    ];
+    expect(dealtCards).toHaveLength(52);
+    expect(new Set(dealtCards).size).toBe(52);
+    expect(hand.results.reduce((total, result) => total + result.amount, 0)).toBe(9);
+    ledgerBalances(table);
+  });
+
+  test.each(['holdem', 'omaha', 'omaha_bomb', 'indian'] as const)('schema-three %s snapshots preserve frozen preset behavior and immutable history', game => {
+    const table = new Table();
+    table.rules(game);
+    table.deal();
+    const original = structuredClone(table.room);
+    const saved = structuredClone(original);
+    saved.schemaVersion = 3;
+    const normalized = normalizeRoom(saved);
+    expect(normalized.schemaVersion).toBe(4);
+    expect(normalized).toEqual({ ...original, schemaVersion: 4 });
+    expect(normalizeRoom(normalized)).toEqual(normalized);
+    table.room = normalized;
+    table.finish();
+    ledgerBalances(table);
+  });
+});
 
 describe('Omaha: independent exactly-two-hole, exactly-three-board evaluator oracles', () => {
   test.each([
@@ -786,7 +904,7 @@ describe('legacy state and history remain ordinary single-run Holdem', () => {
     const legacy = asLegacy(table.room);
     const before = structuredClone(legacy);
     const normalized = normalizeRoom(legacy);
-    expect(normalized.schemaVersion).toBe(3);
+    expect(normalized.schemaVersion).toBe(4);
     expect(normalized.settings.minBuyIn).toBe(4000);
     expect(normalized.nextHandRules).toEqual(defaultHandRules(normalized.settings));
     expect(normalized.hand!.rules).toEqual(defaultHandRules(normalized.settings));

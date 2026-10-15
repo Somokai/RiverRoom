@@ -172,6 +172,60 @@ afterAll(async () => {
 });
 
 describe('mixed-game HTTP commands against real, isolated in-memory PostgreSQL', () => {
+  test('combined attributes stay private, versioned, retry-safe and durable across HTTP, sockets and history', async () => {
+    const setup = await funded([1000, 1000, 1000]);
+    let room = setup.room;
+    const [host, other] = setup.people as [Guest, Guest, Guest];
+    const rules: HandRules = {
+      ...defaultHandRules(), game: 'omaha', doubleBoard: true, bombPot: true, indian: true,
+      bombAnte: 17, indianAnte: 11, omahaAnte: 13,
+    };
+    expect((await command(room, other, { type: 'next_hand', rules })).response.status).toBe(403);
+    expect((await command(room, host, { type: 'next_hand', rules: { ...rules, doubleBoard: 1 } })).response.status).toBe(400);
+    const original = room;
+    const key = randomUUID();
+    room = await accepted(room, host, { type: 'next_hand', rules }, key);
+    const retry = await command(original, host, { type: 'next_hand', rules }, key);
+    expect(retry.response.status).toBe(200);
+    expect(retry.json.duplicate).toBe(true);
+    expect((await command(room, host, { type: 'next_hand', rules: { ...rules, indian: false } }, key)).response.status).toBe(409);
+    expect((await command(original, host, { type: 'next_hand', rules })).response.status).toBe(409);
+    room = await deal(room, host);
+    expect(room.hand).toMatchObject({ rules, street: 'flop', pot: 51, smallBlindSeat: null, bigBlindSeat: null });
+    expect(room.hand!.boards.map(board => board.length)).toEqual([3, 3]);
+    expect(room.legal.bettingLimit).toBe('pot_limit');
+    for (const who of setup.people) {
+      for (const view of [await get(room.id, who), await socketView(room.id, who)]) {
+        expect(view.hand).not.toHaveProperty('deck');
+        expect(view.hand).not.toHaveProperty('burned');
+        expect(view.hand).not.toHaveProperty('holeCards');
+        expect(view.players.find(player => player.id === who.user.id)!.cards).toEqual([null, null, null, null]);
+        expect(view.players.filter(player => player.id !== who.user.id).every(player => player.cards.length === 4 && player.cards.every(card => card !== null))).toBe(true);
+      }
+    }
+    const frozen = structuredClone((await store.getRoom(room.id)).hand);
+    room = await accepted(room, host, { type: 'next_hand', rules: defaultHandRules() });
+    expect((await new Store(database).getRoom(room.id)).hand).toEqual(frozen);
+    room = await checkDown(room, setup.people);
+    const history = (await store.hands(room.id)).entries[0]!;
+    expect(history.rules).toEqual(rules);
+    expect(history.boards.map(board => board.length)).toEqual([5, 5]);
+    expect(history.results.map(result => result.amount)).toEqual([26, 25]);
+    expect(history.pot).toBe(51);
+    expect(room.players.reduce((sum, player) => sum + player.stack, 0)).toBe(3000);
+    const ledger = await allLedger(room.id);
+    expect(ledger.filter(entry => entry.kind === 'ante').map(entry => entry.chips)).toEqual([17, 17, 17]);
+    expect(ledger.some(entry => entry.kind === 'blind')).toBe(false);
+    book(ledger);
+    expect((await store.verifyAudit(room.id)).valid).toBe(true);
+    const stats = await store.playerStats(host.user.id);
+    expect(stats.games.find(group => group.game === 'omaha')!.counts.hands).toBe(1);
+    room = await deal(room, host);
+    expect(room.hand).toMatchObject({ rules: defaultHandRules(), street: 'preflop', boards: [[]] });
+    expect(room.players[0]!.cards.every(card => card !== null)).toBe(true);
+    expect(room.players[1]!.cards).toEqual([null, null]);
+  });
+
   test('omitted minimum defaults to 500, guest funding is approved once, and minimum edits move no money', async () => {
     const host = await guest('Five hundred host');
     const other = await guest('Five hundred guest');
@@ -570,7 +624,7 @@ describe('mixed-game HTTP commands against real, isolated in-memory PostgreSQL',
     await database.query('UPDATE rr_rooms SET state=$2::jsonb WHERE id=$1', [room.id, JSON.stringify(legacy)]);
     const restoredStore = new Store(database);
     const restored = await restoredStore.getRoom(room.id);
-    expect(restored.schemaVersion).toBe(3);
+    expect(restored.schemaVersion).toBe(4);
     expect(restored.settings.minBuyIn).toBe(4000);
     expect(restored.hand).toMatchObject({
       rules: { game: 'holdem', maxRunouts: 1, sevenDeuceBounty: 0 },
@@ -584,12 +638,12 @@ describe('mixed-game HTTP commands against real, isolated in-memory PostgreSQL',
       const summary = (await restoredStore.rooms(who.user.id)).find(item => item.id === room.id)!;
       expect(summary).toMatchObject({ stack: 4900, buyIns: 5000, chipNet: 0, bountyNet: 0, net: 0 });
     }
-    expect((await restoredStore.openRooms()).find(item => item.id === room.id)!.schemaVersion).toBe(3);
+    expect((await restoredStore.openRooms()).find(item => item.id === room.id)!.schemaVersion).toBe(4);
     room = await get(room.id, host);
     room = await accepted(room, host, { type: 'chat', message: 'Persist the upgraded snapshot without moving chips.' });
     expect(await allLedger(room.id)).toEqual(ledger);
     const saved = await database.query<{ state: Room }>('SELECT state FROM rr_rooms WHERE id=$1', [room.id]);
-    expect(saved.rows[0]!.state.schemaVersion).toBe(3);
+    expect(saved.rows[0]!.state.schemaVersion).toBe(4);
     expect(saved.rows[0]!.state.hand!.rules.game).toBe('holdem');
     room = await checkDown(room, setup.people);
     expect(room.hand!.board.slice(0, 3)).toEqual(modern.hand!.board);

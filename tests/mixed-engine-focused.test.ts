@@ -203,7 +203,7 @@ describe('focused deals, privacy, and host controls', () => {
     const before = structuredClone(old);
     let room = normalizeRoom(structuredClone(old));
     assertRoom(room);
-    expect(room.schemaVersion).toBe(3);
+    expect(room.schemaVersion).toBe(4);
     expect(room.nextHandRules).toMatchObject({ game: 'indian', indianAnte: 7, maxRunouts: 3, omahaAnte: 20 });
     expect(room.hand).toEqual({ ...before.hand, rules: { ...before.hand!.rules, omahaAnte: 0 } });
     expect(room.players).toEqual(before.players);
@@ -331,7 +331,7 @@ describe('focused deals, privacy, and host controls', () => {
     for (const key of ['rules', 'boards', 'runoutBoards', 'runoutPrefix', 'runoutCount', 'runoutVote', 'preflopPotAdjustment', 'bounty', 'bountyAfter']) delete hand[key];
     const changed = transition(legacy, 'p0', { type: 'chat', message: 'Legacy room' }, { now: ++now });
     assertRoom(changed.room);
-    expect(changed.room).toMatchObject({ schemaVersion: 3, nextHandRules: { game: 'holdem', maxRunouts: 1, sevenDeuceBounty: 0 } });
+    expect(changed.room).toMatchObject({ schemaVersion: 4, nextHandRules: { game: 'holdem', maxRunouts: 1, sevenDeuceBounty: 0 } });
     expect(changed.room.hand!.rules).toMatchObject({ game: 'holdem', maxRunouts: 1, sevenDeuceBounty: 0 });
     expect(raw).not.toHaveProperty('schemaVersion');
     expect(hand).not.toHaveProperty('rules');

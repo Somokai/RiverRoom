@@ -1,6 +1,6 @@
 import { randomInt } from 'node:crypto';
 import type { Command, RoomView } from '../shared/model.js';
-import { isLegacyIndianHand, presetRaise } from '../shared/model.js';
+import { isIndian, isLegacyIndianHand, isOmaha, presetRaise } from '../shared/model.js';
 import { evaluate, evaluateOmaha, makeDeck, RANKS } from './cards.js';
 
 // A bot only receives a redacted view; in Indian poker even its own cards are hidden.
@@ -13,33 +13,41 @@ export function chooseBotAction(
   const player = view.players.find(item => item.id === view.youId);
   if (!hand || !player || !legal.canAct) throw new Error('Bot is not ready to act.');
   const cards = player.cards.filter((card): card is string => card !== null);
-  const omaha = hand.rules.game === 'omaha' || hand.rules.game === 'omaha_bomb';
+  const omaha = isOmaha(hand.rules);
   const draw = () => {
     const value = random();
     if (!Number.isFinite(value) || value < 0 || value >= 1) throw new Error('Bot randomness must be between 0 (inclusive) and 1 (exclusive).');
     return value;
   };
   let strength = 0.3;
-  if (hand.rules.game === 'indian' && !isLegacyIndianHand(hand)) {
+  if (isIndian(hand.rules) && !isLegacyIndianHand(hand)) {
+    const holeCount = omaha ? 4 : 2;
     const opponents = view.players.filter(item => item.id !== view.youId && item.hand);
     const live = opponents.filter(item => !item.hand!.folded);
-    if (!live.length || opponents.some(item => item.cards.length !== 2 || item.cards.some(card => card === null)))
+    if (!live.length || opponents.some(item => item.cards.length !== holeCount || item.cards.some(card => card === null)))
       throw new Error('Indian poker bot needs the visible opponent hands.');
-    const visible = new Set([...hand.board, ...opponents.flatMap(item => item.cards)]);
+    const visible = new Set([...hand.boards.flat(), ...opponents.flatMap(item => item.cards)]);
     const unseen = makeDeck().filter(card => !visible.has(card));
+    const needed = holeCount + hand.boards.reduce((sum, board) => sum + 5 - board.length, 0);
+    if (unseen.length < needed) throw new Error('Indian poker bot cannot sample a complete hand.');
+    const score = (hole: string[], board: string[]) => omaha ? evaluateOmaha(hole, board).score : evaluate([...hole, ...board]).score;
     let equity = 0;
     // Sample only unknown cards consistent with this public view, never the server's deck.
     for (let sample = 0; sample < 24; sample++) {
       const deck = [...unseen];
-      for (let index = 0; index < 7 - hand.board.length; index++) {
+      for (let index = 0; index < needed; index++) {
         const picked = index + Math.floor(draw() * (deck.length - index));
         [deck[index], deck[picked]] = [deck[picked]!, deck[index]!];
       }
-      const board = [...hand.board, ...deck.slice(2, 7 - hand.board.length)];
-      const own = evaluate([...deck.slice(0, 2), ...board]).score;
-      const others = live.map(item => evaluate([...item.cards.filter((card): card is string => card !== null), ...board]).score);
-      const best = Math.max(own, ...others);
-      if (own === best) equity += 1 / (1 + others.filter(score => score === best).length);
+      let offset = holeCount;
+      for (const prefix of hand.boards) {
+        const board = [...prefix, ...deck.slice(offset, offset + 5 - prefix.length)];
+        offset += 5 - prefix.length;
+        const own = score(deck.slice(0, holeCount), board);
+        const others = live.map(item => score(item.cards.filter((card): card is string => card !== null), board));
+        const best = Math.max(own, ...others);
+        if (own === best) equity += 1 / ((1 + others.filter(value => value === best).length) * hand.boards.length);
+      }
     }
     strength = equity / 24;
   } else if (isLegacyIndianHand(hand)) {
