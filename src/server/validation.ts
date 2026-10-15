@@ -33,6 +33,9 @@ export const settingsSchema = z.object({
 export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('deal') }),
   z.object({ type: z.literal('act'), action: z.enum(['fold', 'check', 'call', 'raise']), amount: z.number().int().min(1).max(1_000_000_000).optional() }),
+  z.object({ type: z.literal('reveal'), handId: z.string().uuid(),
+    cardIndexes: z.array(z.number().int().min(0).max(3)).min(1).max(4)
+      .refine(indexes => new Set(indexes).size === indexes.length, 'Choose each card only once.') }).strict(),
   z.object({ type: z.literal('fund'), amount }),
   z.object({ type: z.literal('approve'), requestId: z.string().uuid(), approve: z.boolean() }),
   z.object({ type: z.literal('cash_out') }),

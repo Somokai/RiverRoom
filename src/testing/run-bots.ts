@@ -70,11 +70,12 @@ export function assertPrivateView(room: RoomView, userId: string) {
     for (const field of ['deck', 'burned', 'holeCards']) assert(!Object.hasOwn(room.hand, field), `Private ${field} was sent to a client.`);
     assert.deepEqual(room.hand.board, room.hand.boards[0] ?? [], 'The first-board projection disagrees with the canonical boards.');
     if (Object.keys(room.hand.revealed).length > 0) {
-      assert(room.hand.street === 'complete' && (indian || room.hand.showdown || room.hand.bounty), 'Private hands were revealed before a completed showdown or bounty award.');
+      assert(room.hand.street === 'complete', 'Private hands were revealed before the hand completed.');
       if (!legacyIndian && room.hand.showdown) assert.equal(room.hand.board.length, 5, 'A community-card showdown needs a complete board.');
-      for (const id of Object.keys(room.hand.revealed)) {
-        assert(room.hand.players.some(player => player.id === id && (indian || !player.folded)), 'A folded or absent player\'s hand was revealed.');
-        if (!room.hand.showdown && !indian) assert.equal(id, room.hand.bounty?.winnerId, 'An unrelated hand was revealed for a bounty.');
+      for (const [id, cards] of Object.entries(room.hand.revealed)) {
+        assert(room.hand.players.some(player => player.id === id), 'An absent player\'s hand was revealed.');
+        assert(cards.length > 0 && cards.length <= cardCount && new Set(cards).size === cards.length &&
+          cards.every(card => /^[2-9TJQKA][cdhs]$/.test(card)), 'Publicly revealed cards are invalid.');
       }
     }
     if (room.hand.bounty) {
@@ -93,7 +94,8 @@ export function assertPrivateView(room: RoomView, userId: string) {
       assert.equal(player.cards.length, player.hand ? cardCount : 0, 'Own card count is incorrect.');
       assert(player.cards.every(card => typeof card === 'string' && /^[2-9TJQKA][cdhs]$/.test(card)), 'Own cards are invalid.');
     } else if (room.hand?.revealed[player.id]) {
-      assert.deepEqual(player.cards, room.hand.revealed[player.id], 'Showdown cards disagree with the public result.');
+      assert.equal(player.cards.length, cardCount, 'An opponent\'s private card count is incorrect.');
+      assert.deepEqual(player.cards.filter(card => card !== null), room.hand.revealed[player.id], 'Shown cards disagree with the public result.');
     } else {
       assert(player.cards.every(card => card === null), 'An opponent\'s unrevealed cards were exposed.');
       assert.equal(player.cards.length, player.hand ? cardCount : 0, 'An opponent\'s private card count is incorrect.');

@@ -10,6 +10,7 @@ import { EmojiPicker } from './EmojiPicker';
 import { useCountdown } from './clock';
 import { useMotionPreference } from './motionPreference';
 import { useEmotes } from './emotes';
+import { canPremove, resolvePremove, type Premove } from './premoves';
 import { GAME_LABELS, chips, handAnte, handGameLabel, isLegacyIndianHand, money, presetRaise, type Command, type GameVariant, type HandRules, type Identity, type RoomView, type RunoutCount } from '../shared/model';
 
 export function Game({ initialRoom, user, onHome, onSessionExpired }: {
@@ -31,6 +32,11 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const [hostTarget, setHostTarget] = useState('');
   const [copied, setCopied] = useState(false);
   const [sound, setSound] = useState(false);
+  const [premove, setPremove] = useState<Premove | null>(null);
+  const pendingPremove = useRef<Premove | null>(null);
+  const changePremove = useCallback((next: Premove | null) => {
+    pendingPremove.current = next; setPremove(next);
+  }, []);
   const motion = useMotionPreference();
   const sending = useRef(false);
   const expired = useRef(onSessionExpired);
@@ -67,9 +73,9 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
     });
     socket.on('room', (next: RoomView) => acceptRoom(next));
     socket.on('emote', receiveEmote);
-    socket.on('disconnect', () => { setConnected(false); clearEmotes(); });
+    socket.on('disconnect', () => { setConnected(false); clearEmotes(); changePremove(null); });
     socket.on('connect_error', (reason: Error) => {
-      setConnected(false);
+      setConnected(false); changePremove(null);
       if (reason.message === 'Session expired.') expired.current();
     });
     socket.on('server_error', (message: string) => setError(message));
@@ -77,7 +83,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
     const visibility = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', visibility);
     return () => { emoteSocket.current = null; socket.disconnect(); clearInterval(interval); document.removeEventListener('visibilitychange', visibility); };
-  }, [initialRoom.id, user.csrf, acceptRoom, refresh, receiveEmote, clearEmotes]);
+  }, [initialRoom.id, user.csrf, acceptRoom, refresh, receiveEmote, clearEmotes, changePremove]);
   useEffect(() => { if (notice) { const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); } }, [notice]);
   useEffect(() => { chatEnd.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [room.events.length, room.events.at(-1)?.id, panel]);
   const hero = room.players.find(player => player.id === user.id)!;
@@ -159,7 +165,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
     };
   }, [playTurnSound]);
 
-  async function command(value: Command): Promise<boolean> {
+  const command = useCallback(async (value: Command): Promise<boolean> => {
     if (sending.current) return false;
     sending.current = true; setBusy(true); setError('');
     try { acceptRoom((await submit(room, value)).room); return true; }
@@ -169,8 +175,24 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
       else await refresh();
       return false;
     } finally { sending.current = false; setBusy(false); }
-  }
-  const doAct = (action: 'fold' | 'check' | 'call' | 'raise', raise?: number) => void command({ type: 'act', action, ...(raise !== undefined ? { amount: raise } : {}) });
+  }, [room, acceptRoom, refresh]);
+  useEffect(() => {
+    const pending = pendingPremove.current;
+    if (!pending) return;
+    const action = resolvePremove(pending, room, connected);
+    if (action === 'cancel') changePremove(null);
+    else if (action !== 'wait' && !busy && !sending.current) {
+      changePremove(null);
+      void command({ type: 'act', action });
+    }
+  }, [room, connected, busy, premove, command, changePremove]);
+  const doAct = (action: 'fold' | 'check' | 'call' | 'raise', raise?: number) => {
+    changePremove(null);
+    void command({ type: 'act', action, ...(raise !== undefined ? { amount: raise } : {}) });
+  };
+  const revealCards = useCallback((handId: string, cardIndexes: number[]) => {
+    void command({ type: 'reveal', handId, cardIndexes });
+  }, [command]);
   function openFunding() {
     setFunding(Math.min(affordableFunding, hero.stack === 0 ? Math.max(room.settings.minBuyIn, room.settings.bigBlind * 100) : room.settings.bigBlind * 20));
     setModal('fund');
@@ -189,6 +211,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   }
   const addBot = () => void command({ type: 'add_bot' });
   const disable = busy || !connected || !open;
+  const premoveAvailable = !disable && !legal.canAct && canPremove(room);
   const openEmoji = useCallback(() => { setError(''); setModal('emoji'); }, []);
   function soundToggle() {
     if (soundEnabled.current) {
@@ -237,7 +260,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
             : <span>Blinds <b>{chips(room.settings.smallBlind)} / {chips(room.settings.bigBlind)}</b>{displayedAnte > 0 && <> <span className="middot">/</span> Ante {chips(displayedAnte)}</>}</span>}
           <span>Hand <b>#{room.handNumber.toString().padStart(3, '0')}</b></span></div>
         <PokerTable room={room} timeOffset={timeOffset} onChooseEmoji={open ? openEmoji : undefined} emojiDisabled={disable}
-          live={connected} animations={motion.enabled}
+          live={connected} animations={motion.enabled} onReveal={revealCards} revealDisabled={busy || !connected}
           emotes={emotes.active} mutedEmotes={emotes.muted} onEmote={emotes.send} onToggleMute={emotes.toggleMute}
           emoteDisabled={!connected || !open} emoteSending={emotes.sending} emoteCooldownUntil={emotes.cooldownUntil} emoteError={emotes.error} />
         <div className={`action-console ${legal.canAct && !runoutVote ? 'your-turn' : ''}`}>
@@ -275,6 +298,19 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
             }}>Take a seat again <Plus size={17} /></button> : <button className="button button-outline" disabled={disable || !!ownRequest || affordableFunding <= 0 || (hero.stack === 0 && hero.buyIns > 0 && !room.settings.allowRebuys)} onClick={openFunding}><HandCoins size={18} /> {hero.stack === 0 ? hero.buyIns ? 'Rebuy chips' : 'Buy in' : 'Add chips'}</button>}
             {isHost && room.players.filter(player => player.seat !== null).length < room.settings.maxSeats && <button className="button button-outline" disabled={disable} onClick={addBot}><Bot size={18} /> Add practice bot</button>}
           </> : <><button className="button button-gold" onClick={() => setModal('ledger')}><ReceiptText size={18} /> View final ledger</button><button className="button button-outline" onClick={onHome}>Back to sessions <ArrowRight size={17} /></button></>}</div>}
+          <fieldset className="premove-controls" aria-label="Premoves for this street" aria-describedby="premove-help">
+            <span className="premove-label">Premoves</span>
+            {(['check_fold', 'check'] as const).map(action => <label key={action}
+              title={action === 'check_fold' ? 'Check if free; otherwise fold on your next turn.' : 'Check on your next turn; cancel if facing a bet.'}>
+              <input type="checkbox" checked={premove?.action === action}
+                disabled={!premoveAvailable || (action === 'check' && legal.toCall > 0)}
+                onChange={event => {
+                  if (!event.currentTarget.checked) changePremove(null);
+                  else if (hand && premoveAvailable) changePremove({ action, roomId: room.id, handId: hand.id, street: hand.street, youId: room.youId });
+                }} />
+              {action === 'check_fold' ? 'Check/Fold' : 'Check'}</label>)}
+            <span id="premove-help" hidden>Check/Fold checks if free; otherwise folds. Check cancels when facing a bet. Uncheck to cancel.</span>
+          </fieldset>
         </div>
         {hand?.bounty && <BountyNotice bounty={hand.bounty} room={room} />}
         <div className="table-footer"><span><ShieldCheck size={13} /> Server-dealt. Privately held. Every chip recorded.</span><div>

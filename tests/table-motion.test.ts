@@ -68,6 +68,14 @@ function freeze<T>(value: T): T {
 }
 
 describe('motion snapshot baselines', () => {
+  test('voluntary partial reveals flip only the selected card, without replaying payouts or revealing its neighbor', () => {
+    const completed = act(start(table()), 'fold');
+    const shown = apply(completed, 'p0', { type: 'reveal', handId: completed.hand!.id, cardIndexes: [1] });
+    expect(motion(completed, shown, 'p1')).toEqual({
+      chips: [], cards: [{ kind: 'reveal', key: holeCardKey('p0', 1), delay: 0 }],
+    });
+    expect(motion(completed, shown, 'p0')).toEqual(empty);
+  });
   test('initial/reconnect, repeated, skipped, out-of-order, room and viewer changes do not animate', () => {
     const ready = table();
     const dealt = start(ready);

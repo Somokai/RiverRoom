@@ -2,19 +2,20 @@ import { memo, useEffect, useState, type CSSProperties } from 'react';
 import { Bot, Pause, Crown, WifiOff, Spade, MessageCircle, VolumeX } from 'lucide-react';
 import { GAME_LABELS, chips, handGameLabel, isLegacyIndianHand, type RoomView } from '../shared/model';
 import { EMOTES, type EmoteId, type TableEmote } from '../shared/emotes';
-import { ChipStack, CommunityBoards, PlayerName, PlayingCard } from './ui';
+import { ChipStack, CommunityBoards, PlayerName, PlayingCard, cardLabel } from './ui';
 import { useCountdown } from './clock';
 import { useTableAnimations } from './TableAnimations';
 import { holeCardKey } from './tableMotion';
 import { EmoteMenu } from './EmoteMenu';
 
 export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseEmoji, emojiDisabled = false, live = false, animations = true,
-  emotes, mutedEmotes, onEmote, onToggleMute, emoteDisabled, emoteSending, emoteCooldownUntil, emoteError }: {
+  emotes, mutedEmotes, onEmote, onToggleMute, emoteDisabled, emoteSending, emoteCooldownUntil, emoteError, onReveal, revealDisabled }: {
   room: RoomView; timeOffset: number; onChooseEmoji?: () => void; emojiDisabled?: boolean;
   live?: boolean; animations?: boolean;
   emotes: Readonly<Record<string, { event: TableEmote }>>; mutedEmotes: ReadonlySet<string>;
   onEmote: (emote: EmoteId) => Promise<boolean>; onToggleMute: (playerId: string) => void;
   emoteDisabled: boolean; emoteSending: boolean; emoteCooldownUntil: number; emoteError: string;
+  onReveal: (handId: string, cardIndexes: number[]) => void; revealDisabled: boolean;
 }) {
   const motion = useTableAnimations(room, live, animations, Object.values(emotes).map(item => item.event.id).join(':'));
   const [menu, setMenu] = useState<{ playerId: string; anchor: HTMLElement } | null>(null);
@@ -33,6 +34,10 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
   const active = !!hand && hand.street !== 'complete';
   const legacyIndian = !!hand && isLegacyIndianHand(hand);
   const hiddenOwn = indian && active && !!hero.hand && !hero.hand.folded;
+  const publicCards = hand?.revealed[room.youId] ?? [];
+  const revealCount = hero.cards.length || (legacyIndian ? 1 : game === 'omaha' || game === 'omaha_bomb' ? 4 : 2);
+  const hiddenCardIndexes = hero.cards.flatMap((card, index) => card && !publicCards.includes(card) ? [index] : []);
+  const revealAvailable = !revealDisabled && hand?.street === 'complete' && !!hero.hand;
   const vote = active ? hand.runoutVote : null;
   const doubleBoard = hand?.boards.length === 2;
   const compactPairs = Math.floor((room.settings.maxSeats - 1) / 2);
@@ -85,12 +90,13 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
       const turn = !!player && active && hand.actorId === player.id && !vote;
       const isYou = player?.id === room.youId;
       const folded = player?.hand?.folded;
+      const showing = !!player && !!hand?.revealed[player.id]?.length;
       const runoutEligible = !!player && !!vote?.eligible.includes(player.id);
       const runoutChoice = player ? vote?.votes[player.id] : undefined;
       const wager = player ? motion.wagers[player.id] ?? 0 : 0;
       const emote = player && !mutedEmotes.has(player.id) ? emotes[player.id]?.event : undefined;
       const openEmotes = (anchor: HTMLElement) => { if (player) setMenu({ playerId: player.id, anchor }); };
-      return <div key={seat} className={`seat ${isYou ? 'hero-seat' : ''} ${player?.cards.length === 4 ? 'four-card-seat' : ''} ${turn ? 'seat-active' : ''} ${folded ? 'seat-folded' : ''} ${player && winners.has(player.id) ? 'seat-winner' : ''} ${emote ? 'seat-emoting' : ''}`}
+      return <div key={seat} className={`seat ${isYou ? 'hero-seat' : ''} ${player?.cards.length === 4 ? 'four-card-seat' : ''} ${turn ? 'seat-active' : ''} ${folded ? 'seat-folded' : ''} ${showing ? 'seat-showing' : ''} ${player && winners.has(player.id) ? 'seat-winner' : ''} ${emote ? 'seat-emoting' : ''}`}
         style={{ '--seat-x': `${x}%`, '--seat-y': `${y}%`, '--compact-seat-x': `${compactX}%`, '--compact-seat-y': `${compactY}px`,
           '--seat-color': ['#7973aa', '#368b7c', '#aa785b', '#64799c', '#987947', '#8a6795', '#678c9c', '#839360', '#a2697d'][seat] } as CSSProperties}>
         {player ? <>
@@ -137,6 +143,20 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
         </> : <div className="empty-seat"><span>+</span><small>OPEN SEAT</small></div>}
       </div>;
     })}
+    <section className="reveal-controls" aria-label="Reveal your cards" aria-describedby="reveal-help">
+      <span className="reveal-label" title="After the hand, show cards individually from left to right, or show all. Reveals stay public in hand history.">Show cards</span>
+      {Array.from({ length: revealCount }, (_, index) => {
+        const card = hiddenOwn ? null : hero.cards[index];
+        const shown = !!card && publicCards.includes(card);
+        const label = `${shown ? 'Card' : 'Reveal card'} ${index + 1}${shown ? ' already shown' : ''}${card ? `: ${cardLabel(card)}` : ''}`;
+        return <button key={index} type="button" className={`reveal-card-button ${shown ? 'card-revealed' : ''}`}
+          disabled={!revealAvailable || !card || shown} aria-label={label} title={label}
+          onClick={() => { if (hand && revealAvailable) onReveal(hand.id, [index]); }}>{index + 1}</button>;
+      })}
+      <button type="button" className="reveal-all-button" disabled={!revealAvailable || hiddenCardIndexes.length === 0}
+        onClick={() => { if (hand && revealAvailable) onReveal(hand.id, hiddenCardIndexes); }}>Reveal all</button>
+      <span id="reveal-help" hidden>After the hand ends, optionally reveal cards from left to right, even if you folded. Revealed cards stay public in hand history.</span>
+    </section>
     {motion.layer}
     {menu && menuPlayer && room.status === 'open' && <EmoteMenu anchor={menu.anchor} own={menu.playerId === room.youId}
       name={menuPlayer.name} muted={mutedEmotes.has(menu.playerId)} disabled={emoteDisabled}

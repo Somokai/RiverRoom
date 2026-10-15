@@ -166,6 +166,10 @@ export class Store {
       };
       await tx.query('INSERT INTO rr_hands(room_id,hand_id,hand_number,summary) VALUES($1,$2,$3,$4::jsonb)',
         [room.id, hand.id, hand.number, JSON.stringify(summary)]);
+    } else if (hand?.street === 'complete' && command === 'reveal') {
+      await tx.query(
+        'INSERT INTO rr_hand_reveals(room_id,hand_id,room_version,revealed) VALUES($1,$2,$3,$4::jsonb)',
+        [room.id, hand.id, room.version, JSON.stringify(hand.revealed)]);
     }
     await recordPlayerStats(tx, before, result, actorId, command);
   }
@@ -267,10 +271,18 @@ export class Store {
     return { entries, nextCursor: rows.rows.length > limit ? entries.at(-1)!.seq : null };
   }
   async hands(roomId: string, before?: number): Promise<{ entries: HandHistory[]; nextCursor: number | null }> {
-    const rows = await this.db.query<{ summary: HandHistory }>(
-      'SELECT summary FROM rr_hands WHERE room_id=$1 AND ($2::integer IS NULL OR hand_number<$2) ORDER BY hand_number DESC LIMIT 31',
+    const rows = await this.db.query<{ summary: HandHistory; revealed: HandHistory['revealed'] | null }>(
+      `SELECT h.summary, r.revealed FROM rr_hands h
+       LEFT JOIN LATERAL (
+         SELECT revealed FROM rr_hand_reveals WHERE room_id=h.room_id AND hand_id=h.hand_id
+         ORDER BY room_version DESC LIMIT 1
+       ) r ON TRUE
+       WHERE h.room_id=$1 AND ($2::integer IS NULL OR h.hand_number<$2) ORDER BY h.hand_number DESC LIMIT 31`,
       [roomId, before ?? null]);
-    const entries = rows.rows.slice(0, 30).map(row => normalizeHistory(row.summary));
+    const entries = rows.rows.slice(0, 30).map(row => {
+      const summary = normalizeHistory(row.summary);
+      return row.revealed ? { ...summary, revealed: row.revealed } : summary;
+    });
     return { entries, nextCursor: rows.rows.length > 30 ? entries.at(-1)!.number : null };
   }
   async exportSnapshot(roomId: string, userId: string) {

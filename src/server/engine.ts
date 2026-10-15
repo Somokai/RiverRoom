@@ -527,6 +527,25 @@ function act(room: Room, actorId: string, command: Extract<Command, { type: 'act
   selectNextActor(room, hp.seat, fx, ctx);
 }
 
+function revealCards(room: Room, actorId: string, command: Extract<Command, { type: 'reveal' }>, fx: Effects, ctx: Context) {
+  const hand = room.hand;
+  if (!hand || hand.id !== command.handId) throw new GameError('That hand is no longer available to reveal.', 409);
+  if (hand.street !== 'complete') throw new GameError('Cards can only be revealed after the hand ends.', 409);
+  const cards = hand.holeCards[actorId];
+  if (!cards || !hand.players.some(player => player.id === actorId)) throw new GameError('You were not dealt into that hand.', 403);
+  if (!Array.isArray(command.cardIndexes) || !command.cardIndexes.length ||
+      new Set(command.cardIndexes).size !== command.cardIndexes.length ||
+      command.cardIndexes.some(index => !integer(index, 0, cards.length - 1)))
+    throw new GameError('Choose one or more of your dealt cards, without duplicates.');
+  const publicCards = new Set(hand.revealed[actorId] ?? []);
+  const selected = new Set(command.cardIndexes);
+  const newlyRevealed = cards.filter((card, index) => selected.has(index) && !publicCards.has(card));
+  if (!newlyRevealed.length) throw new GameError('Those cards are already revealed.', 409);
+  for (const card of newlyRevealed) publicCards.add(card);
+  hand.revealed[actorId] = cards.filter(card => publicCards.has(card));
+  event(fx, ctx, 'cards_revealed', `${findPlayer(room, actorId).name} revealed ${newlyRevealed.join(' ')}.`, actorId);
+}
+
 function assertHandCards(hand: Hand) {
   const legacyIndian = isLegacyIndianHand(hand);
   const boardCount = legacyIndian ? 0 : hand.rules.game === 'omaha_bomb' ? 2 : 1;
@@ -542,9 +561,11 @@ function assertHandCards(hand: Hand) {
   if (holeIds.length !== hand.players.length || hand.players.some(player => hand.holeCards[player.id]?.length !== (legacyIndian ? 1 : holeCardCount(hand.rules))))
     throw new Error('Invalid dealt hole cards.');
   for (const [id, cards] of Object.entries(hand.revealed))
-    if (!hand.holeCards[id] || !sameCards(cards, hand.holeCards[id]!)) throw new Error('Revealed cards do not match the dealt cards.');
-  if (hand.rules.game === 'indian' && hand.street !== 'complete' && Object.keys(hand.revealed).length)
-    throw new Error('An active Indian hand cannot reveal the owner cards.');
+    if (!hand.holeCards[id] || !cards.length || new Set(cards).size !== cards.length ||
+        !sameCards(cards, hand.holeCards[id]!.filter(card => cards.includes(card))))
+      throw new Error('Revealed cards do not match the dealt cards.');
+  if (hand.street !== 'complete' && Object.keys(hand.revealed).length)
+    throw new Error('Cards cannot be publicly revealed before a hand ends.');
   if (hand.runoutPrefix) {
     validateBoards(hand.runoutPrefix);
     if (hand.runoutPrefix.some((prefix, index) => prefix.length === 5 ||
@@ -678,7 +699,7 @@ export function createRoom(input: { id: string; code: string; name: string; host
 export function transition(original: Room, actorId: string, command: Command, ctx: Context): Transition {
   const room = normalizeRoom(structuredClone(original));
   const fx: Effects = { events: [], transfers: [] };
-  if (room.status === 'closed') throw new GameError('This session is closed. Its records are still available.', 409);
+  if (room.status === 'closed' && command.type !== 'reveal') throw new GameError('This session is closed. Its records are still available.', 409);
   if (command.type !== 'join') findPlayer(room, actorId);
   switch (command.type) {
     case 'join': {
@@ -686,6 +707,7 @@ export function transition(original: Room, actorId: string, command: Command, ct
       break;
     }
     case 'act': act(room, actorId, command, fx, ctx); break;
+    case 'reveal': revealCards(room, actorId, command, fx, ctx); break;
     case 'deal': requireHost(room, actorId); deal(room, fx, ctx); break;
     case 'next_hand':
       requireHost(room, actorId);
@@ -869,7 +891,8 @@ export function roomView(original: Room, userId: string, connected: Set<string>,
       const hp = hand?.players.find(item => item.id === player.id) ?? null;
       const visible = hand?.rules.game === 'indian'
         ? player.id !== userId || hp?.folded || hand.street === 'complete' ? hand.holeCards[player.id] : undefined
-        : hand?.revealed[player.id] ?? (player.id === userId ? hand?.holeCards[player.id] : undefined);
+        : player.id === userId ? hand?.holeCards[player.id]
+          : hand?.holeCards[player.id]?.map(card => hand.revealed[player.id]?.includes(card) ? card : null);
       const chipNet = player.stack + (activeHand(room) ? hp?.committed ?? 0 : 0) + player.cashOuts - player.buyIns;
       return {
         ...player, connected: player.bot || connected.has(player.id), hand: hp,
