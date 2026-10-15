@@ -259,7 +259,10 @@ them outside the app. Bot-related amounts remain virtual.
   Shift+F10, then use arrow keys and Enter; Escape dismisses the menu. Tapping
   another player's seat name also opens its mute menu.
 - Per-table player emojis: click your name at your seat or the smiley/profile
-  control in the table header to search or browse the emoji picker. Choose or
+  control in the table header to search or browse **208 choices across eight
+  categories**, including smileys, gestures, animals, food, activities, travel,
+  symbols, and objects. Search by name, keyword (for example, "boba" or "luck"),
+  or the emoji itself. Choose or
   remove an emoji at any time while the session is open, including during a
   hand or while paused. Everyone sees updates live beside your name. Your
   selection survives reconnects, restarts, and rejoining that table; other

@@ -369,15 +369,15 @@ describe('persistent multiplayer service', () => {
       });
       const update = new Promise<RoomView>(resolve => {
         socket.on('room', (view: RoomView) => {
-          if (view.players.find(item => item.id === player.user.id)?.emoji === '\u{1F60E}') resolve(view);
+          if (view.players.find(item => item.id === player.user.id)?.emoji === '\u{1FAE1}') resolve(view);
         });
       });
       const commandId = randomUUID();
-      const input = { type: 'emoji', emoji: '\u{1F60E}' };
+      const input = { type: 'emoji', emoji: '\u{1FAE1}' };
       const result = await command(room, player, input, commandId);
       expect(result.response.status).toBe(200);
       room = result.json.room;
-      expect((await update).players.find(item => item.id === player.user.id)?.emoji).toBe('\u{1F60E}');
+      expect((await update).players.find(item => item.id === player.user.id)?.emoji).toBe('\u{1FAE1}');
       expect(room.players.find(item => item.id === host.user.id)?.emoji).toBeNull();
       expect((await get(otherRoom.id, player)).players[0]?.emoji).toBeNull();
       const retry = await command(before, player, input, commandId);
@@ -460,12 +460,12 @@ describe('persistent multiplayer service', () => {
       const firstStore = new Store(local);
       const person = await firstStore.createIdentity('Persistent person');
       const saved = await firstStore.create(person.user, { name: 'Persistent table', settings: DEFAULT_SETTINGS, buyIn: 10000, commandId: randomUUID() });
-      await firstStore.execute(saved.id, person.user.id, randomUUID(), { type: 'emoji', emoji: '\u{1F988}' }, saved.version);
+      await firstStore.execute(saved.id, person.user.id, randomUUID(), { type: 'emoji', emoji: '\u{1F9F2}' }, saved.version);
       await local.close(); local = null;
       local = await openDatabase({ directory: join(path, 'postgres') });
       const next = new Store(local);
       expect((await next.getRoom(saved.id)).players[0]?.stack).toBe(10000);
-      expect((await next.getRoom(saved.id)).players[0]?.emoji).toBe('\u{1F988}');
+      expect((await next.getRoom(saved.id)).players[0]?.emoji).toBe('\u{1F9F2}');
       expect((await next.identity(person.token))?.id).toBe(person.user.id);
       expect((await next.verifyAudit(saved.id)).valid).toBe(true);
       expect((await next.ledger(saved.id)).entries).toHaveLength(1);

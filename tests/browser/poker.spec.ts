@@ -531,6 +531,37 @@ test('per-table emojis update live, survive reconnects, and can be searched, cha
   } finally { await guestContext.close(); }
 });
 
+test('expanded emoji catalog is searchable, categorized and selectable on desktop and phone', async ({ page }) => {
+  const initial = await createTable(page, 'Expanded emoji table', 2);
+  await page.getByRole('button', { name: 'Choose table emoji', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Choose your table emoji', exact: true });
+  await expect(picker.getByRole('status')).toHaveText('208 emojis');
+  await expect(picker.locator('.emoji-choice')).toHaveCount(208);
+  for (const [keyword, label] of [
+    ['salute', 'Saluting face'], ['boba', 'Bubble tea'], ['knuckles', 'Fist bump'], ['fortune', 'Crystal ball'],
+  ]) {
+    await picker.getByRole('searchbox').fill(keyword!);
+    await expect(picker.getByRole('button', { name: `Choose ${label}`, exact: true })).toBeVisible();
+  }
+  await picker.getByRole('group', { name: 'Emoji categories' }).getByRole('button', { name: 'Objects', exact: true }).click();
+  await expect(picker.getByRole('status')).toHaveText('15 emojis');
+  await picker.getByRole('button', { name: 'Choose Crystal ball', exact: true }).click();
+  await expect(picker).toHaveCount(0);
+  await expect(page.locator('.hero-seat').getByRole('img', { name: 'Crystal ball', exact: true })).toBeVisible();
+  expect((await getRoom(page, initial.id)).players.find(player => player.id === initial.youId)!.emoji).toBe('\u{1F52E}');
+  await page.reload();
+  await expect(page.locator('.hero-seat').getByRole('img', { name: 'Crystal ball', exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.getByRole('button', { name: 'Change your table emoji', exact: true }).click();
+  await picker.getByRole('group', { name: 'Emoji categories' }).getByRole('button', { name: 'Objects', exact: true }).click();
+  await picker.getByRole('button', { name: 'Choose Magnet', exact: true }).click();
+  await expect(page.locator('.hero-seat').getByRole('img', { name: 'Magnet', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.getByRole('button', { name: 'Change your table emoji', exact: true }).click();
+  await picker.getByRole('button', { name: 'Remove emoji', exact: true }).click();
+  await expect(page.locator('.hero-seat .player-emoji')).toHaveCount(0);
+});
+
 test('emoji interactions avoid recurring formatting work and delayed hover feedback', async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     const counters = { numberFormats: 0, formatCalls: 0 };
