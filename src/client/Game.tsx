@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Bot, Check, CheckCheck,
 import { api, ApiError, getRoom, submit } from './api';
 import { BountyNotice, Brand, Modal, Numeric, PlayerName, bountyLabel, ruleSummary, runLabel, signedChips } from './ui';
 import { PokerTable } from './Table';
+import { CurrentHand } from './HandSummary';
 import { Records } from './Records';
 import { PlayerStatsDialog } from './PlayerStats';
 import { EmojiPicker } from './EmojiPicker';
@@ -278,8 +279,8 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
           emoteDisabled={!connected || !open} emoteSending={emotes.sending} emoteCooldownUntil={emotes.cooldownUntil} emoteError={emotes.error} />
         <div className={`action-console ${legal.canAct && !runoutVote ? 'your-turn' : ''}`}>
           <div className="action-heading"><span className={`turn-heading ${legal.canAct && !runoutVote ? 'positive' : ''}`}>{!open ? 'SESSION COMPLETE' : runoutVote ? 'RUNOUT CONSENT' : room.paused ? 'THE TABLE IS PAUSED' : legal.canAct ? 'YOUR MOVE' : activeHand ? `WAITING FOR ${room.players.find(player => player.id === hand.actorId)?.name.toUpperCase() ?? 'THE TABLE'}` : 'BETWEEN HANDS'}</span>
-            <span className="muted">{!open ? 'Your final results are in the ledger.' : runoutVote ? room.paused ? 'Decision paused; submitted choices are saved.' : 'Betting is over. Decide before the cards run out.'
-              : activeHand ? legal.canAct ? `${chips(legal.callAmount)} to call` : hero.sittingOut ? 'You will sit out the next hand.' : 'A little patience. A good hand is worth it.' : room.nextHandAt && !room.paused && canDeal ? <NextDealClock deadline={room.nextHandAt} timeOffset={timeOffset} /> : 'Ready when you are.'}</span></div>
+            {activeHand && hero.hand && !hero.hand.folded ? <CurrentHand room={room} /> : <span className="muted">{!open ? 'Your final results are in the ledger.' : runoutVote ? room.paused ? 'Decision paused; submitted choices are saved.' : 'Betting is over. Decide before the cards run out.'
+              : activeHand ? legal.canAct ? `${chips(legal.callAmount)} to call` : hero.sittingOut ? 'You will sit out the next hand.' : 'A little patience. A good hand is worth it.' : room.nextHandAt && !room.paused && canDeal ? <NextDealClock deadline={room.nextHandAt} timeOffset={timeOffset} /> : 'Ready when you are.'}</span>}</div>
           {runoutVote && hand ? <RunoutDecision room={room} hand={hand} timeOffset={timeOffset} disabled={disable} error={error}
             choose={count => command({ type: 'runouts', handId: hand.id, count })} /> : activeHand ? <>
             {(isIndian(hand.rules) || isOmaha(hand.rules) || isBombPot(hand.rules) || isDoubleBoard(hand.rules)) && <p className="variant-guidance">
