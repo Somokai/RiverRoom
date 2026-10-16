@@ -44,10 +44,10 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
   const upperRows = Math.max(1, Math.ceil(compactPairs / 2));
   const lowerRows = Math.floor(compactPairs / 2);
   // Narrow tables reserve a clear middle band for boards, with opponent rows above and below.
-  const compactCommunity = upperRows * 130 + (doubleBoard ? 100 : 65);
-  const lowerStart = compactCommunity + (doubleBoard ? 160 : 120);
-  const compactHero = lowerRows ? lowerStart + (lowerRows - 1) * 130 + 140
-    : compactCommunity + (doubleBoard ? 160 : 140);
+  const compactCommunity = upperRows * 130 + (doubleBoard ? 110 : 55);
+  const lowerStart = compactCommunity + (doubleBoard ? 180 : 120);
+  const compactHero = lowerRows ? lowerStart + (lowerRows - 1) * 130 + 160
+    : compactCommunity + (doubleBoard ? 180 : 140);
   const seats = Array.from({ length: room.settings.maxSeats }, (_, seat) => {
     const relative = (seat - (hero.seat ?? 0) + room.settings.maxSeats) % room.settings.maxSeats;
     const angle = Math.PI / 2 + relative * Math.PI * 2 / room.settings.maxSeats;

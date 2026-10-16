@@ -273,6 +273,10 @@ them outside the app. Bot-related amounts remain virtual.
 
 ### Included
 
+- Readable interface typography: at least 14px body text and controls, 12px supporting
+  labels, and 16px form inputs without shrinking them on phones. Seat labels
+  retain at least 12px rendered text. Brighter secondary text and darker red
+  card ink improve contrast; phone betting actions use a two-column layout.
 - Two to nine seats, live presence, reconnect, invite links, table chat.
 - Live table animations: cards travel from the deck to each seat in deal order;
   new community cards are dealt and newly public hole cards turn face up.
