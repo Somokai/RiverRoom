@@ -1,7 +1,6 @@
 .table-stage .playing-card { animation: none; }
 .table-stage .pot-display { position: relative; }
 .collected-chips { display: inline-flex; }.collected-chips-empty { visibility: hidden; }
-.pot-display .pot-inclusive { position: absolute; left: 50%; top: calc(100% + 1px); transform: translateX(-50%); margin: 0; color: #a6bea2; font-size: 8px; letter-spacing: 0; white-space: nowrap; }
 .seat .seat-bet { left: 50%; top: calc(100% + 24px); bottom: auto; transform: translate(-50%, -50%); width: max-content; min-height: 24px; padding: 3px 6px; gap: 4px; border: 1px solid #9aaf8530; border-radius: 9px; font-variant-numeric: tabular-nums; z-index: 6; }
 .hero-seat .seat-bet { top: -28px; }
 .seat-bet.wager-empty { visibility: hidden; }
@@ -24,7 +23,6 @@
 @media (max-width: 600px) {
   .seat .seat-bet { font-size: 7px; padding: 2px 3px; gap: 2px; }
   .seat-bet .wager-value { max-width: 44px; overflow: hidden; text-overflow: ellipsis; }
-  .pot-display .pot-inclusive { font-size: 7px; }
   .table-deck { width: 18px; height: 25px; left: -27px; }
   .moving-chip-amount { font-size: 10px; }
   .motion-preference { font-size: 9px; }

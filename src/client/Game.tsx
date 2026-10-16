@@ -11,7 +11,7 @@ import { useCountdown } from './clock';
 import { useMotionPreference } from './motionPreference';
 import { useEmotes } from './emotes';
 import { canPremove, resolvePremove, type Premove } from './premoves';
-import { chips, handAnte, handGameLabel, handGameVariant, handModifiers, isBombPot, isDoubleBoard, isIndian, isLegacyIndianHand, isOmaha, money, presetRaise, rulesGameLabel, supportsSevenDeuce, type Command, type HandRules, type Identity, type RoomView, type RunoutCount } from '../shared/model';
+import { chips, handAnte, handGameLabel, handGameVariant, handModifiers, isBombPot, isDoubleBoard, isIndian, isLegacyIndianHand, isOmaha, isPotLimit, money, postflopCapRemaining, presetRaise, rulesGameLabel, supportsSevenDeuce, type Command, type HandRules, type Identity, type RoomView, type RunoutCount } from '../shared/model';
 
 export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   initialRoom: RoomView; user: Identity; onHome: () => void; onSessionExpired: () => void;
@@ -21,6 +21,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [savingEmoji, setSavingEmoji] = useState(false);
   const [timeOffset, setTimeOffset] = useState(initialRoom.serverTime - Date.now());
   const [panel, setPanel] = useState<'players' | 'chat'>('players');
   const [modal, setModal] = useState<'fund' | 'bot-fund' | 'settings' | 'invite' | 'cashout' | 'close' | 'transfer' | 'ledger' | 'hands' | 'audit' | 'emoji' | 'stats' | null>(null);
@@ -95,6 +96,8 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const displayedAnte = handAnte(displayedRules, room.settings);
   const legacyIndian = !!hand && isLegacyIndianHand(hand);
   const legal = room.legal;
+  const capRemaining = postflopCapRemaining(hand, hero.hand);
+  const cappedAllIn = capRemaining !== null && capRemaining < hero.stack;
   const turnKey = hand?.actorId === user.id && legal.canAct ? `${hand.id}:${hand.street}:${hand.turnStartedAt}` : '';
   currentTurn.current = turnKey;
   const open = room.status === 'open';
@@ -193,6 +196,16 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   const revealCards = useCallback((handId: string, cardIndexes: number[]) => {
     void command({ type: 'reveal', handId, cardIndexes });
   }, [command]);
+  const chooseEmoji = useCallback(async (emoji: string | null): Promise<boolean> => {
+    if (sending.current) return false;
+    setModal(null); setNotice(''); setSavingEmoji(true);
+    try {
+      const ok = await command({ type: 'emoji', emoji });
+      if (ok) setNotice(emoji ? 'Table emoji updated.' : 'Table emoji removed.');
+      return ok;
+    } finally { setSavingEmoji(false); }
+  }, [command]);
+  const closeEmoji = useCallback(() => { if (!sending.current) setModal(null); }, []);
   function openFunding() {
     setFunding(Math.min(affordableFunding, hero.stack === 0 ? Math.max(room.settings.minBuyIn, room.settings.bigBlind * 100) : room.settings.bigBlind * 20));
     setModal('fund');
@@ -240,7 +253,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
       <div className="game-nav-center"><span className={`connection-dot ${connected ? '' : 'disconnected'}`} />{connected ? 'LIVE TABLE' : 'RECONNECTING'}</div>
       <div className="nav-right"><button className={`icon-button ${sound ? 'sound-enabled' : ''}`} aria-label={sound ? 'Mute turn sounds' : 'Enable turn sounds'} onClick={soundToggle}>{sound ? <Volume2 size={18} /> : <VolumeX size={18} />}</button>
         {open ? <button type="button" className="profile-chip profile-emoji-button" aria-label="Choose table emoji" aria-haspopup="dialog"
-          title="Choose table emoji" disabled={disable} onClick={openEmoji}>
+          title="Choose table emoji" aria-disabled={disable} onClick={() => { if (!disable) openEmoji(); }}>
           <span className="avatar small-avatar">{user.name.slice(0, 1).toUpperCase()}</span><PlayerName player={hero} />{!hero.emoji && <Smile size={17} />}</button>
           : <span className="profile-chip"><span className="avatar small-avatar">{user.name.slice(0, 1).toUpperCase()}</span><PlayerName player={hero} /></span>}
         <button className="text-button lobby-link" onClick={onHome}><ArrowLeft size={16} /> Lobby</button></div></header>
@@ -286,15 +299,18 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
                 type="number" inputMode="numeric" min={minRaise} max={legal.maxRaiseTo} step={1} value={Number.isFinite(amount) ? amount : ''} disabled={disable || !legal.canRaise} onChange={event => setAmount(event.target.value === '' ? Number.NaN : Number(event.target.value))} /></label></div>
             <input className="bet-slider" aria-label="Raise amount slider" type="range" min={minRaise || 0} max={Math.max(minRaise, legal.maxRaiseTo)} value={usableAmount || 0} step={1} disabled={disable || !legal.canRaise} onChange={event => setAmount(Number(event.target.value))} />
             <div className="action-buttons"><button className="button button-fold" disabled={disable || !legal.canAct} onClick={() => doAct('fold')}>Fold</button>
-              <button className="button button-call" disabled={disable || !legal.canAct} onClick={() => doAct(legal.canCheck ? 'check' : 'call')}>{legal.canCheck ? <><CheckCheck size={18} /> Check</> : <>Call <strong>{chips(legal.callAmount)}</strong>{legal.callAmount === hero.stack && legal.callAmount > 0 && <small>ALL IN</small>}</>}</button>
+              <button className="button button-call" disabled={disable || !legal.canAct} onClick={() => doAct(legal.canCheck ? 'check' : 'call')}>{legal.canCheck ? <><CheckCheck size={18} /> Check</> : <>Call <strong>{chips(legal.callAmount)}</strong>{legal.callAmount > 0 && (legal.callAmount === hero.stack || legal.callAmount === capRemaining) && <small>{cappedAllIn ? 'CAPPED' : 'ALL IN'}</small>}</>}</button>
               <button className="button button-raise" disabled={disable || !legal.canRaise || !validRaise} onClick={() => { if (validRaise) doAct('raise', amount); }}>{hand.currentBet === 0 ? 'Bet' : 'Raise to'} <strong>{validRaise ? chips(amount) : '—'}</strong><ArrowUpRight size={17} /></button>
               <button className="button button-allin" disabled={disable || !legal.canAct || !legal.canAllIn}
-                aria-describedby="betting-limits" onClick={() => legal.callAmount >= hero.stack ? doAct('call') : doAct('raise', legal.allInTo)}>All in</button></div>
+                aria-describedby="betting-limits" onClick={() => legal.allInTo <= (hero.hand?.streetBet ?? 0) + legal.callAmount ? doAct('call') : doAct('raise', legal.allInTo)}>{cappedAllIn ? 'Bet cap' : 'All in'}</button></div>
             <p className="sizing-note" id="betting-limits">{legal.canRaise && !validRaise && <span className="negative">Enter a whole-chip total from {chips(minRaise)} to {chips(legal.maxRaiseTo)}. </span>}
               Amounts are total bets for this street. Pot presets include the call; BB presets and sliders respect the server's legal limits.
               {legal.bettingLimit === 'pot_limit' && <span className="limit-explanation">Pot-limit raise-to cap: <b>{chips(legal.maxRaiseTo)}</b> (pot cap {chips(legal.potLimitTo ?? legal.maxRaiseTo)}, including the call).
-                {legal.canAct && !legal.canAllIn && legal.allInTo > legal.maxRaiseTo && <> Your full-stack total is {chips(legal.allInTo)}; All in is unavailable above the pot limit.</>}
-                {hand.street === 'preflop' && ' Short preflop blinds count as nominal full blinds when calculating the pot limit.'}</span>}</p>
+                {legal.canAct && !legal.canAllIn && legal.allInTo > legal.maxRaiseTo && <> Your {cappedAllIn ? 'cap-limited' : 'full-stack'} total is {chips(legal.allInTo)}; {cappedAllIn ? 'Bet cap' : 'All in'} is unavailable above the pot limit.</>}
+                {hand.street === 'preflop' && ' Short preflop blinds count as nominal full blinds when calculating the pot limit.'}</span>}
+              {!!hand.rules.postflopCap && <span className="limit-explanation">Post-flop cap: <b>{chips(hand.rules.postflopCap)} per player</b>.
+                {capRemaining === null ? ' Starts on the flop.' : ` ${chips(capRemaining)} remaining for you across the flop, turn, and river.`}
+                {' '}Antes, blinds, and preflop bets do not count. Reaching the cap ends your betting, not your hand; unused stack chips stay yours.</span>}</p>
           </> : <div className="between-actions">{open ? <>
             {isHost && <button className="button button-gold" disabled={disable || !canDeal || room.paused} onClick={() => void command({ type: 'deal' })}><Play size={17} /> {room.handNumber ? 'Deal next hand' : 'Deal first hand'}</button>}
             {hero.seat === null ? <button className="button button-outline" disabled={disable} onClick={() => {
@@ -373,14 +389,12 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
         <div className="sidebar-note">A home game, not a payment service.<br />Settle recorded balances outside the app.</div>
       </aside></div>
     </main>
-    {notice && <div className="toast" role="status"><Check size={16} />{notice}</div>}
+    {(savingEmoji || notice) && <div className="toast" role="status">
+      {savingEmoji ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
+      {savingEmoji ? 'Saving emoji...' : notice}</div>}
     {modal === 'emoji' && <EmojiPicker value={hero.emoji} disabled={disable}
       error={error || (!open ? 'This session is closed.' : !connected ? 'Reconnect to change your table emoji.' : '')}
-      close={() => { if (!sending.current) setModal(null); }} choose={async emoji => {
-        const ok = await command({ type: 'emoji', emoji });
-        if (ok) setNotice(emoji ? 'Table emoji updated.' : 'Table emoji removed.');
-        return ok;
-      }} />}
+      close={closeEmoji} choose={chooseEmoji} />}
     {(modal === 'ledger' || modal === 'hands' || modal === 'audit') && <Records room={room} tab={modal} close={() => setModal(null)} />}
     {modal === 'stats' && <PlayerStatsDialog key={user.id} userId={user.id} close={() => setModal(null)} onSessionExpired={onSessionExpired}
       refreshKey={hand?.street === 'complete' ? hand.id : undefined} />}
@@ -462,7 +476,7 @@ function RunoutDecision({ room, hand, timeOffset, disabled, error, choose }: {
       <span className={`runout-clock ${room.paused ? 'clock-paused' : ''}`} role="timer" aria-live="off"
         aria-label={room.paused ? 'Runout decision paused' : seconds === null ? 'Runout clock waiting' : `${seconds} seconds to choose`}>
         {room.paused ? <><Pause size={14} /> Paused</> : seconds === null ? 'Clock waiting' : seconds ? `${seconds}s to choose` : 'Resolving choices…'}</span></div>
-    <p>All betting has ended due to all-ins. Choices mean <b>up to</b> that many runs; the lowest choice wins.
+    <p>All betting has ended due to all-ins{hand.rules.postflopCap ? ' or the post-flop cap' : ''}. Choices mean <b>up to</b> that many runs; the lowest choice wins.
       {' '}A missing choice after 20 seconds defaults to <b>run once</b>.</p>
     <ul className="runout-players" aria-label="Eligible players">
       {vote.eligible.map(id => {
@@ -510,7 +524,8 @@ function NextHandPanel({ room, disabled, error, save }: {
   const valid = Number.isSafeInteger(draft.bombAnte) && draft.bombAnte >= 1 && draft.bombAnte <= 10_000_000 &&
     Number.isSafeInteger(draft.indianAnte) && draft.indianAnte >= 1 && draft.indianAnte <= 10_000_000 &&
     Number.isSafeInteger(draft.omahaAnte) && draft.omahaAnte >= 1 && draft.omahaAnte <= 10_000_000 &&
-    Number.isSafeInteger(draft.sevenDeuceBounty) && draft.sevenDeuceBounty >= 0 && draft.sevenDeuceBounty <= 10_000_000;
+    Number.isSafeInteger(draft.sevenDeuceBounty) && draft.sevenDeuceBounty >= 0 && draft.sevenDeuceBounty <= 10_000_000 &&
+    Number.isSafeInteger(draft.postflopCap ?? 0) && (draft.postflopCap ?? 0) >= 0 && (draft.postflopCap ?? 0) <= 10_000_000;
   return <section className="next-hand-panel" aria-labelledby="next-hand-title">
     <header><div><span className="eyebrow">YOUR NIGHT, YOUR MIX</span><h2 id="next-hand-title">Next hand</h2></div>
       {canEdit && <button type="button" ref={toggle} className="button button-small button-outline"
@@ -537,7 +552,9 @@ function NextHandPanel({ room, disabled, error, save }: {
       <fieldset className="hand-attributes"><legend>Hand attributes (combine any)</legend>
         <label className="checkbox"><input ref={firstAttribute} type="checkbox" checked={isOmaha(draft)}
           onChange={event => setDraft({ ...draft, ...handModifiers(draft), game: event.target.checked ? 'omaha' : 'holdem',
-            sevenDeuceBounty: event.target.checked ? 0 : draft.sevenDeuceBounty })} /> PLO (four cards, pot limit)</label>
+            sevenDeuceBounty: event.target.checked ? 0 : draft.sevenDeuceBounty })} /> Omaha (four cards)</label>
+        <label className="checkbox"><input type="checkbox" checked={isPotLimit(draft)}
+          onChange={event => setDraft({ ...draft, potLimit: event.target.checked })} /> Pot limit</label>
         <label className="checkbox"><input type="checkbox" checked={isDoubleBoard(draft)}
           onChange={event => setDraft({ ...draft, doubleBoard: event.target.checked })} /> Double board</label>
         <label className="checkbox"><input type="checkbox" checked={isBombPot(draft)}
@@ -551,33 +568,40 @@ function NextHandPanel({ room, disabled, error, save }: {
           onChange={bombAnte => setDraft({ ...draft, bombAnte })} hint="Ante only; the flop is dealt immediately on each board. No blinds or preflop betting." />}
         {!isBombPot(draft) && isIndian(draft) && <Numeric label="Indian round buy-in (ante per player)" value={draft.indianAnte} min={1}
           onChange={indianAnte => setDraft({ ...draft, indianAnte })} hint="Mandatory each hand, from existing chips, before normal blinds. Replaces the regular table ante." />}
-        {!isBombPot(draft) && !isIndian(draft) && isOmaha(draft) && <Numeric label="PLO round buy-in (ante per player)" value={draft.omahaAnte} min={1}
-          onChange={omahaAnte => setDraft({ ...draft, omahaAnte })} hint="Mandatory each hand, from existing chips, before normal blinds. Counts toward the pot limit; replaces the regular table ante." />}
+        {!isBombPot(draft) && !isIndian(draft) && isOmaha(draft) && <Numeric label="Omaha round buy-in (ante per player)" value={draft.omahaAnte} min={1}
+          onChange={omahaAnte => setDraft({ ...draft, omahaAnte })} hint="Mandatory each hand, from existing chips, before normal blinds. Replaces the regular table ante; does not count toward the post-flop cap." />}
+        <Numeric label="Post-flop cap per player (chips)" value={draft.postflopCap ?? 0} min={0}
+          onChange={postflopCap => setDraft({ ...draft, postflopCap })}
+          hint="0 means no cap. One limit across flop, turn, and river; excludes antes, blinds, and preflop bets. Unused stack chips are never committed." />
         {supportsSevenDeuce(draft) && <Numeric label="7/2 offsuit bounty (chips per opponent)" value={draft.sevenDeuceBounty}
           onChange={sevenDeuceBounty => setDraft({ ...draft, sevenDeuceBounty })} hint="0 disables. Separate off-table settlement, never taken from a stack." />}
         <label className="field"><span>All-in runout consent</span><select value={draft.maxRunouts}
           onChange={event => setDraft({ ...draft, maxRunouts: Number(event.target.value) as RunoutCount })}>
           <option value={1}>Run once — no vote</option><option value={2}>Allow up to twice</option><option value={3}>Allow up to three times</option>
-        </select><small>Offered only after all betting ends due to all-ins, subject to deck capacity.</small></label>
+        </select><small>Offered after betting ends due to all-ins or the post-flop cap, subject to deck capacity.</small></label>
       </div>
-      {!valid && <p className="negative form-note" role="status">Use whole-chip amounts: antes from 1 to 10,000,000; bounty from 0 to 10,000,000.</p>}
+      {!valid && <p className="negative form-note" role="status">Use whole-chip amounts: antes from 1 to 10,000,000; bounty and post-flop cap from 0 to 10,000,000.</p>}
       <button className="button button-gold" disabled={disabled || !valid}>Save next-hand rules <Check size={16} /></button>
     </form>}
     <div className="mixed-house-rules" aria-label={editing ? 'Draft game house rules' : 'Queued game house rules'}>
       <strong>{editing ? 'DRAFT HOUSE RULES' : 'QUEUED HOUSE RULES'}</strong>
       {isOmaha(rules) ? <p>Four hole cards. Use <b>exactly two hole cards and three cards from one board</b>.
-        {' '}Betting is pot limit; a full-stack all-in must fit that limit. The 7/2 bounty is Hold'em-only.</p>
-        : <p>Texas Hold'em: two hole cards, no-limit betting. Best five-card poker hand wins, using any combination of hole and board cards.
+        {' '}The 7/2 bounty is Hold'em-only.</p>
+        : <p>Texas Hold'em: two hole cards. Best five-card poker hand wins, using any combination of hole and board cards.
         {supportsSevenDeuce(rules) && (rules.sevenDeuceBounty > 0 ? <> A sole winner of the entire hand with 7/2 offsuit is owed {chips(rules.sevenDeuceBounty)} chips equivalent by <b>each other dealt-in player</b>.
           {' '}Split or partial wins do not qualify. The winning 7/2 is shown even when everyone folds. The bonus is off-table; no stacks change and no payment is collected.</>
           : ' The 7/2 offsuit bounty is off.')}</p>}
-      {isIndian(rules) && <p>Everyone else can see all of your hole cards, but you cannot until you fold or the hand ends. Indian visibility combines with either two-card Hold'em or four-card PLO.</p>}
+      <p>{isPotLimit(rules) ? 'Pot-limit betting: raises and all-ins must fit the pot limit.' : 'No-limit betting, subject to your remaining stack and any post-flop cap.'}</p>
+      {!!rules.postflopCap && <p>Each player may wager at most <b>{chips(rules.postflopCap)} chips total across the flop, turn, and river</b>.
+        {' '}Antes, blinds, and preflop bets are excluded. At the cap, you stay eligible for covered pots but cannot bet more; unused chips remain in your stack.
+        {' '}If pot limit is also selected, both limits apply.</p>}
+      {isIndian(rules) && <p>Everyone else can see all of your hole cards, but you cannot until you fold or the hand ends. Indian visibility combines with either two-card Hold'em or four-card Omaha.</p>}
       {isDoubleBoard(rules) && <p>Two community boards share the pot equally, including every side pot. Each board is evaluated separately; odd chips go to the first board.</p>}
       {isBombPot(rules) && <p>Each player posts the bomb ante of <b>{chips(rules.bombAnte)} chips</b> from their existing stack. A flop is dealt on each board immediately, with no blinds or preflop betting. Short stacks post their remaining chips.</p>}
       {!isBombPot(rules) && (isIndian(rules) || isOmaha(rules)) && <p>Mandatory round buy-in: <b>{chips(isIndian(rules) ? rules.indianAnte : rules.omahaAnte)} chips per dealt-in player</b>,
         {' '}posted automatically as an ante from existing stacks, in addition to blinds. It replaces the regular table ante, never buys extra chips, and does not count toward calling a bet.
         {' '}A short stack posts its remaining chips and is all-in. Table buy-in limits remain separate.</p>}
-      <p>{rules.maxRunouts === 1 ? 'Run once: normal dealing, without a runout vote.' : `After betting is over due to all-ins, eligible players may consent to up to ${rules.maxRunouts} runs. Lowest choice wins; missing choices after 20 seconds mean once. Deck capacity may lower the maximum.`}</p>
+      <p>{rules.maxRunouts === 1 ? 'Run once: normal dealing, without a runout vote.' : `After betting is over due to all-ins or caps, eligible players may consent to up to ${rules.maxRunouts} runs. Lowest choice wins; missing choices after 20 seconds mean once. Deck capacity may lower the maximum.`}</p>
     </div>
   </section>;
 }

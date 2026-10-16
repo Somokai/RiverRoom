@@ -149,40 +149,43 @@ bounties, or runout permissions in an active hand.
 | Game | Cards and betting |
 |---|---|
 | Texas Hold'em | Two private cards; ordinary no-limit betting and blinds |
-| Pot-limit Omaha | Four private cards; exactly two hole cards plus three from the board; mandatory round ante, normal blinds and pot-limit betting |
-| Double-board PLO bomb pot | Four private cards; configured ante instead of blinds; two flops immediately, with no preflop betting |
+| Omaha | Four private cards; exactly two hole cards plus three from the board; mandatory round ante, normal blinds, and independently selectable pot-limit betting |
+| Double-board Omaha bomb pot | Four private cards; configured ante instead of blinds; two flops immediately, with no preflop betting; pot limit is optional |
 | Indian poker (two cards) | Two face-out hole cards; opponents see both but their owner cannot until folding or the hand ends; mandatory round ante, normal blinds and no-limit Hold'em betting |
 
-Select any combination of **PLO (four cards, pot limit)**, **Double board**,
-**Bomb pot**, and **Indian (face-out cards)**. With none selected, play ordinary
-Texas Hold'em. Double board does not require a bomb pot or PLO; bomb pots may
-have one board. Indian visibility also works with four-card PLO.
+Select any combination of **Omaha (four cards)**, **Pot limit**, **Double board**,
+**Bomb pot**, and **Indian (face-out cards)**. Omaha controls card count and
+exactly-two-plus-three evaluation; pot limit controls betting independently.
+This supports no-limit Omaha and pot-limit Hold'em, including their Indian and
+bomb-pot combinations. With none selected, play ordinary no-limit Texas Hold'em.
+Double board does not require a bomb pot or Omaha; bomb pots may have one board.
 The summary and history describe the full combination. Existing saved presets
 and older API clients retain their original behavior.
-Private statistics keep their existing game buckets: PLO combinations count
-as Omaha (or double-board PLO bomb pot without Indian visibility), two-card
+Private statistics keep their existing game buckets: four-card combinations count
+as Omaha (or double-board Omaha bomb pot without Indian visibility), regardless
+of betting limit; two-card
 Indian combinations as Indian, and other two-card combinations as Hold'em.
 
 Without the bomb-pot attribute, Indian poker follows the normal sequence: preflop, a three-card flop,
 turn, and river, with betting on every street. The best five-card hand wins
 using any combination of the two hole cards and five board cards (including
-playing the board); selecting PLO instead requires exactly two of four hole cards
+playing the board); selecting Omaha instead requires exactly two of four hole cards
 and three from each board. Your own cards stay hidden while you are live, including
 all-in consent; folding reveals both to you immediately, also after reconnect.
 Opponents' cards remain visible. Indian hands support one, two, or three
 consensual all-in runouts under the same rules as Hold'em.
 
-Configure **Indian round buy-in (ante per player)** or **PLO round buy-in (ante
+Configure **Indian round buy-in (ante per player)** or **Omaha round buy-in (ante
 per player)** in **Next hand**. Both are mandatory, positive whole-chip amounts,
 initially one big blind. Every dealt-in player posts the amount automatically
 from their existing stack before the normal blinds. This is a per-hand ante,
 not an extra cash buy-in or funding request: it replaces the regular table ante,
 does not count toward a call, and is recorded separately in the chip ledger.
-PLO's pot-limit calculation includes the posted antes. Short stacks post only
+When enabled, the pot-limit calculation includes the posted antes. Short stacks post only
 their remaining chips and are all-in, with normal side-pot eligibility.
 Sitting-out players do not pay. The table minimum buy-in remains 500 by default.
 If attributes are combined, post just one ante: bomb ante takes precedence,
-then Indian ante, then PLO ante, then the regular table ante. These never stack.
+then Indian ante, then Omaha ante, then the regular table ante. These never stack.
 
 Already-dealt hands keep their original betting and accounting on upgrade.
 In particular, a saved one-card Indian hand finishes under its old rules and
@@ -193,18 +196,40 @@ All deals use one burn card per street followed by cards to each selected board.
 board is evaluated separately under the selected Hold'em or Omaha rules. The
 configured big blind still supplies the minimum betting unit. The bomb ante
 is independently configurable in chips, initially five big blinds. It is not
-charged in addition to the regular PLO ante.
+charged in addition to the regular Omaha ante.
 
 Pot-limit caps are enforced by the server, including raises and the All-in
 button. An all-in exceeding the pot cap is not permitted. Preflop pot counts
 assume full nominal blinds even if a blind was short; later streets use the
 actual pot. Pot presets and the slider use the same legal cap.
 
+### Per-player post-flop cap
+
+Set **Post-flop cap per player (chips)** to a whole number from 0 to 10,000,000.
+**0 disables the cap.** A value such as 500 permits each player to wager at most
+500 chips total across the flop, turn, and river combined. Antes, blinds, and
+preflop wagers do not count; the cap does not reset at the next street.
+
+Reaching the cap acts like an all-in for betting, without moving the unused
+stack. The player stays eligible for covered pots, other players finish their
+available betting, and normal side-pot, refund, showdown, and runout rules
+apply. A cap-ending bet can be below a full minimum raise, like a short all-in;
+it does not reopen raising unless a full raise has accumulated. Uncalled
+refunds reduce net post-flop commitments. Winnings and bounty obligations are
+not capped. When **Pot limit** is also selected, both limits apply.
+
+The action panel shows the remaining post-flop allowance and uses **Bet cap**
+when the betting all-in amount is smaller than the physical stack. New settings
+affect future hands only. Schema-five snapshots persist each player's
+post-flop commitments across reconnects and restarts; older hands stay uncapped,
+and old Omaha presets remain pot limit unless explicitly changed. Historical
+cap defaults are projected without rewriting append-only hand or audit records.
+
 ### Run it once, twice, or three times
 
 Select a maximum of one, two, or three runouts in the next-hand rules. One is
 the default. With multiple runs enabled, a choice opens only after all betting
-has finished due to all-ins, with multiple live hands and community cards still
+has finished due to all-ins or post-flop caps, with multiple live hands and community cards still
 to come. A player merely going all-in does not stop others' side-pot betting.
 
 Each remaining player chooses the greatest number they are willing to play.
@@ -283,6 +308,10 @@ them outside the app. Bot-related amounts remain virtual.
   hand or while paused. Everyone sees updates live beside your name. Your
   selection survives reconnects, restarts, and rejoining that table; other
   tables keep their own selections. Existing tables start without emojis.
+  The picker closes immediately on selection and shows **Saving emoji...**
+  until the server confirms it; failures appear on the table without replacing
+  your saved emoji. Off-screen icons retain their grid space while rendering
+  is deferred, and live table updates reuse the unchanged emoji grid.
 - Server-only cryptographic shuffle and hand evaluation.
 - Dealer button, small/big blinds, optional per-player antes, heads-up order.
 - Legal action enforcement, minimum raises, short all-ins and cumulative
@@ -331,6 +360,11 @@ them outside the app. Bot-related amounts remain virtual.
 - Responsive desktop/mobile table, reduced-motion support, native accessible
   dialogs, one large suit symbol per card, optional turn sounds, and no
   externally hosted images or fonts.
+  The felt keeps only the pot amount and, for double-board hands, **Board 1**
+  and **Board 2** labels; single-board hands still show the pot without a board
+  label. Branding and status captions stay off the felt, with accessible
+  descriptions and winner/pause icons retaining context. Run-selection
+  controls, player details, and pot accounting are unchanged.
   Turn sounds start muted on each table visit. Enable them with the speaker
   button; enabling during your turn also pings. Each actionable turn pings once,
   with audio recovery after browser interruptions. If playback is blocked,

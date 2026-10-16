@@ -71,15 +71,15 @@ test('premoves cancel an invalid check, fold to a bet, and check for free exactl
     await command(smallBlind, { type: 'act', action: 'call' });
     await expect(bigBlind.page.getByRole('button', { name: 'Call 200', exact: true })).toBeEnabled();
     await bigBlind.page.getByRole('button', { name: 'Call 200', exact: true }).click();
-    await expect(host.page.locator('.street-label')).toHaveText('FLOP');
+    await expect(host.page.locator('.table-stage')).toHaveAttribute('data-street', 'flop');
     await host.page.getByRole('checkbox', { name: 'Check/Fold', exact: true }).check();
     await command(smallBlind, { type: 'act', action: 'raise', amount: 100 });
     await command(bigBlind, { type: 'act', action: 'call' });
     await expect.poll(async () => (await current()).players.find(player => player.id === host.user.id)!.hand!.folded).toBe(true);
-    await expect(bigBlind.page.locator('.street-label')).toHaveText('TURN');
+    await expect(bigBlind.page.locator('.table-stage')).toHaveAttribute('data-street', 'turn');
     await bigBlind.page.getByRole('checkbox', { name: 'Check/Fold', exact: true }).check();
     await command(smallBlind, { type: 'act', action: 'check' });
-    await expect(bigBlind.page.locator('.street-label')).toHaveText('RIVER');
+    await expect(bigBlind.page.locator('.table-stage')).toHaveAttribute('data-street', 'river');
     await expect(bigBlind.page.getByRole('checkbox', { name: 'Check/Fold', exact: true })).not.toBeChecked();
     await command(smallBlind, { type: 'act', action: 'check' });
     await expect(bigBlind.page.getByRole('button', { name: 'Check', exact: true })).toBeEnabled();
@@ -100,7 +100,7 @@ test('premoves clear when unchecked, paused, refreshed, or disconnected instead 
     await command(host, { type: 'act', action: 'call' });
     await expect(guest.page.getByRole('button', { name: 'Check', exact: true })).toBeEnabled();
     await guest.page.getByRole('button', { name: 'Check', exact: true }).click();
-    await expect(page.locator('.street-label')).toHaveText('FLOP');
+    await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'flop');
     await page.getByRole('checkbox', { name: 'Check', exact: true }).check();
     await command(host, { type: 'pause', value: true });
     await expect(page.getByRole('group', { name: 'Premoves for this street' })).toBeVisible();
@@ -121,7 +121,7 @@ test('premoves clear when unchecked, paused, refreshed, or disconnected instead 
     await expect(page.getByRole('button', { name: 'Check', exact: true })).toBeEnabled();
     expect((await current()).hand!.actorId).toBe(host.user.id);
     await page.getByRole('button', { name: 'Check', exact: true }).click();
-    await expect(page.locator('.street-label')).toHaveText('TURN');
+    await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'turn');
     await expect(page.getByRole('checkbox', { name: 'Check/Fold', exact: true })).not.toBeChecked();
     expect(errors).toEqual([]);
   } finally { await page.context().setOffline(false); await fixture.close(); }
@@ -149,7 +149,7 @@ test('premove transport retries reuse one command key, while version conflicts c
     await command(host, { type: 'act', action: 'call' });
     await expect.poll(() => requests.length).toBe(2);
     expect(requests[0]).toEqual(requests[1]);
-    await expect(guest.page.locator('.street-label')).toHaveText('FLOP');
+    await expect(guest.page.locator('.table-stage')).toHaveAttribute('data-street', 'flop');
     expect((await current()).events.filter(event => event.actorId === guest.user.id && event.kind === 'action')).toHaveLength(1);
     await guest.page.unroute(path);
 
@@ -168,7 +168,7 @@ test('premove transport retries reuse one command key, while version conflicts c
     expect((await current()).hand!.actorId).toBe(host.user.id);
     await expect(page.getByRole('button', { name: 'Check', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'Check', exact: true }).click();
-    await expect(page.locator('.street-label')).toHaveText('TURN');
+    await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'turn');
     await expect(page.getByRole('checkbox', { name: 'Check/Fold', exact: true })).not.toBeChecked();
     expect(errors).toEqual([]);
   } finally { await fixture.close(); }

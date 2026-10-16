@@ -6,7 +6,7 @@ import {
 } from '../src/shared/model';
 import { evaluateIndian, evaluateOmaha } from '../src/server/cards';
 import { createRoom, legalActions, roomView, transition, type Transition } from '../src/server/engine';
-import { normalizeHistory, normalizeRoom } from '../src/server/state';
+import { normalizeHistory, normalizeRoom, ROOM_SCHEMA_VERSION } from '../src/server/state';
 import { commandSchema, settingsSchema } from '../src/server/validation';
 import { chooseBotAction } from '../src/server/bot';
 import { verifyTransfers } from '../src/server/store';
@@ -260,12 +260,12 @@ describe('independent hand attributes', () => {
     expect(table.room.hand).toMatchObject({ boards: [[]], street: 'preflop' });
     expect(table.room.hand!.holeCards.p0).toHaveLength(4);
     expect(roomView(table.room, 'p0', new Set()).players[0]!.cards).toEqual([null, null, null, null]);
-    expect(handModifiers(table.room.hand!.rules)).toEqual({ doubleBoard: false, bombPot: false, indian: true });
+    expect(handModifiers(table.room.hand!.rules)).toEqual({ doubleBoard: false, bombPot: false, indian: true, potLimit: true, postflopCap: 0 });
     expect(rulesGameLabel(table.room.hand!.rules)).toBe('Indian pot-limit Omaha');
-    for (const field of ['doubleBoard', 'bombPot', 'indian']) {
+    for (const field of ['doubleBoard', 'bombPot', 'indian', 'potLimit']) {
       const invalid = { ...defaultHandRules(), [field]: 'true' };
       expect(commandSchema.safeParse({ type: 'next_hand', rules: invalid }).success).toBe(false);
-      expect(() => table.rules('holdem', invalid as unknown as HandRules)).toThrow('valid game');
+      expect(() => table.rules('holdem', invalid as unknown as HandRules)).toThrow('valid hand attributes');
     }
   });
 
@@ -303,8 +303,8 @@ describe('independent hand attributes', () => {
     const saved = structuredClone(original);
     saved.schemaVersion = 3;
     const normalized = normalizeRoom(saved);
-    expect(normalized.schemaVersion).toBe(4);
-    expect(normalized).toEqual({ ...original, schemaVersion: 4 });
+    expect(normalized.schemaVersion).toBe(ROOM_SCHEMA_VERSION);
+    expect(normalized).toEqual({ ...original, schemaVersion: ROOM_SCHEMA_VERSION });
     expect(normalizeRoom(normalized)).toEqual(normalized);
     table.room = normalized;
     table.finish();
@@ -675,7 +675,7 @@ describe('frozen next-hand choices and minimum buy-in', () => {
     table.rules('holdem', { sevenDeuceBounty: 9 }); table.deal();
     const hand = structuredClone(table.room.hand);
     const accounts = table.room.players.map(item => [item.stack, item.buyIns, item.cashOuts, item.bountyNet]);
-    const next: HandRules = { game: 'omaha_bomb', bombAnte: 7, indianAnte: 11, omahaAnte: 13, sevenDeuceBounty: 17, maxRunouts: 3 };
+    const next: HandRules = { game: 'omaha_bomb', bombAnte: 7, indianAnte: 11, omahaAnte: 13, sevenDeuceBounty: 17, maxRunouts: 3, postflopCap: 0 };
     expect(table.send('p0', { type: 'next_hand', rules: next }).transfers).toEqual([]);
     expect(table.room.hand).toEqual(hand);
     expect(table.room.nextHandRules).toEqual(next);
@@ -904,7 +904,7 @@ describe('legacy state and history remain ordinary single-run Holdem', () => {
     const legacy = asLegacy(table.room);
     const before = structuredClone(legacy);
     const normalized = normalizeRoom(legacy);
-    expect(normalized.schemaVersion).toBe(4);
+    expect(normalized.schemaVersion).toBe(ROOM_SCHEMA_VERSION);
     expect(normalized.settings.minBuyIn).toBe(4000);
     expect(normalized.nextHandRules).toEqual(defaultHandRules(normalized.settings));
     expect(normalized.hand!.rules).toEqual(defaultHandRules(normalized.settings));

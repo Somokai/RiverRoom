@@ -3,7 +3,7 @@ import type {
   Card, ChipTransfer, Command, FundingRequest, GameEvent, Hand, HandPlayer, HandRules,
   LegalActions, Player, Room, RoomSettings, RoomView, RunoutCount,
 } from '../shared/model.js';
-import { defaultHandRules, handAnte, isBombPot, isDoubleBoard, isIndian, isLegacyIndianHand, isOmaha, rulesGameLabel, supportsSevenDeuce } from '../shared/model.js';
+import { availableBettingChips, defaultHandRules, handAnte, isBombPot, isDoubleBoard, isIndian, isLegacyIndianHand, isOmaha, isPotLimit, postflopCapRemaining, rulesGameLabel, supportsSevenDeuce } from '../shared/model.js';
 import { evaluate, evaluateIndian, evaluateOmaha, shuffleDeck, type HandRank } from './cards.js';
 import { normalizeRoom, ROOM_SCHEMA_VERSION } from './state.js';
 import { isPlayerEmoji } from '../shared/emoji.js';
@@ -70,11 +70,12 @@ export function validateSettings(settings: RoomSettings) {
 
 function validateHandRules(rules: HandRules, frozen = false) {
   if (!rules || !['holdem', 'omaha', 'omaha_bomb', 'indian'].includes(rules.game) ||
-      [rules.doubleBoard, rules.bombPot, rules.indian].some(value => value !== undefined && typeof value !== 'boolean') ||
+      [rules.doubleBoard, rules.bombPot, rules.indian, rules.potLimit].some(value => value !== undefined && typeof value !== 'boolean') ||
+      (rules.postflopCap !== undefined && !integer(rules.postflopCap, 0)) ||
       !integer(rules.bombAnte) || !integer(rules.indianAnte) || !integer(rules.omahaAnte, frozen ? 0 : 1) ||
       !integer(rules.sevenDeuceBounty, 0) ||
       !integer(rules.maxRunouts, 1, 3))
-    throw new GameError('Choose a valid game, ante, bounty, and one to three runouts.');
+    throw new GameError('Choose valid hand attributes, antes, bounty, a post-flop cap from 0 to 10,000,000, and one to three runouts.');
 }
 
 function transfer(
@@ -131,10 +132,11 @@ function payIntoPot(room: Room, hp: HandPlayer, amount: number, kind: 'blind' | 
   const hand = room.hand;
   if (!hand) throw new Error('No hand for contribution.');
   const player = findPlayer(room, hp.id);
-  const actual = Math.min(amount, player.stack);
+  const actual = Math.min(amount, kind === 'bet' ? availableBettingChips(hand, hp, player.stack) : player.stack);
   if (actual <= 0) return;
   player.stack -= actual;
   hp.committed += actual;
+  if (kind === 'bet' && hand.street !== 'preflop') hp.postflopCommitted += actual;
   if (kind !== 'ante') hp.streetBet += actual;
   hand.pot += actual;
   transfer(fx, kind, playerAccount(player.id), potAccount(hand.id), actual, player.id, hand.id, note);
@@ -188,6 +190,7 @@ function settle(room: Room, fx: Effects, ctx: Context) {
     const refund = highest.committed - (second?.committed ?? 0);
     const player = findPlayer(room, highest.id);
     highest.committed -= refund;
+    highest.postflopCommitted = Math.max(0, highest.postflopCommitted - refund);
     highest.streetBet = Math.max(0, highest.streetBet - refund);
     player.stack += refund;
     hand.pot -= refund;
@@ -378,7 +381,7 @@ function selectNextActor(room: Room, afterSeat: number, fx: Effects, ctx: Contex
   if (!hand || hand.street === 'complete' || hand.runoutVote) return;
   const alive = hand.players.filter(player => !player.folded);
   if (alive.length === 1) { settle(room, fx, ctx); return; }
-  const withChips = alive.filter(player => findPlayer(room, player.id).stack > 0);
+  const withChips = alive.filter(player => availableBettingChips(hand, player, findPlayer(room, player.id).stack) > 0);
   if (withChips.length === 0) { finishAllInBetting(room, fx, ctx); return; }
   if (withChips.length === 1) {
     const only = withChips[0]!;
@@ -421,7 +424,7 @@ function deal(room: Room, fx: Effects, ctx: Context) {
     id: randomUUID(), number: room.handNumber, street: 'preflop', board: [], deck, burned: [], holeCards: {},
     rules, boards: isDoubleBoard(rules) ? [[], []] : [[]],
     runoutBoards: [], runoutPrefix: null, runoutCount: 1, runoutVote: null, preflopPotAdjustment: 0, bounty: null,
-    players: eligible.map(player => ({ id: player.id, seat: player.seat, committed: 0, streetBet: 0, folded: false, actedAtBet: null, lastAction: '' })),
+    players: eligible.map(player => ({ id: player.id, seat: player.seat, committed: 0, postflopCommitted: 0, streetBet: 0, folded: false, actedAtBet: null, lastAction: '' })),
     buttonSeat: button, smallBlindSeat: sb, bigBlindSeat: bb, currentBet: hasBlinds ? room.settings.bigBlind : 0,
     minRaise: room.settings.bigBlind, actorId: null, pot: 0, awardedPot: 0,
     turnStartedAt: ctx.now, deadline: null, startedAt: ctx.now, completedAt: null,
@@ -437,7 +440,7 @@ function deal(room: Room, fx: Effects, ctx: Context) {
   const ante = handAnte(rules, room.settings);
   for (const player of hand.players) if (ante) payIntoPot(room, player, ante, 'ante', fx,
     isBombPot(rules) ? 'Bomb pot ante' : isIndian(rules) ? 'Indian poker round buy-in (ante)'
-      : isOmaha(rules) ? 'PLO round buy-in (ante)' : 'Ante');
+      : isOmaha(rules) ? 'Omaha round buy-in (ante)' : 'Ante');
   if (ante) event(fx, ctx, 'antes_posted', `${rulesGameLabel(rules)}: ${ante.toLocaleString('en-US')} chips per player posted as an ante; short stacks post their remaining chips. Ante chips are in the pot, not part of a call or raise.`);
   if (hasBlinds) {
     const smallBlind = hand.players.find(player => player.seat === sb)!;
@@ -455,24 +458,26 @@ export function legalActions(room: Room, playerId: string): LegalActions {
   const hand = room.hand;
   const player = room.players.find(item => item.id === playerId);
   const hp = hand?.players.find(item => item.id === playerId);
-  const bettingLimit = hand && isOmaha(hand.rules) ? 'pot_limit' : 'no_limit';
+  const bettingLimit = hand && isPotLimit(hand.rules) ? 'pot_limit' : 'no_limit';
   const empty: LegalActions = {
     canAct: false, canCheck: false, canRaise: false, toCall: 0, callAmount: 0, minRaiseTo: 0, maxRaiseTo: 0,
     allInTo: 0, canAllIn: false, bettingLimit, potLimitTo: null, potAfterCall: hand?.pot ?? 0, reason: 'Waiting for your turn',
   };
   if (!hand || !player || !hp || hand.street === 'complete' || room.status === 'closed') return empty;
   const toCall = Math.max(0, hand.currentBet - hp.streetBet);
-  const callAmount = Math.min(player.stack, toCall);
-  const allInTo = hp.streetBet + player.stack;
+  const available = availableBettingChips(hand, hp, player.stack);
+  const callAmount = Math.min(available, toCall);
+  const allInTo = hp.streetBet + available;
   // TDA 56: nominal blind deficits stay in every preflop pot/re-pot calculation, never in the real pot.
   const countedPot = hand.pot + (bettingLimit === 'pot_limit' && hand.street === 'preflop' ? hand.preflopPotAdjustment : 0);
   const potLimitTo = bettingLimit === 'pot_limit' ? hp.streetBet + toCall + countedPot + toCall : null;
   const maxRaiseTo = Math.min(allInTo, potLimitTo ?? allInTo);
   const minRaiseTo = hand.currentBet + hand.minRaise;
-  const opponentsWithChips = hand.players.some(item => item.id !== playerId && !item.folded && findPlayer(room, item.id).stack > 0);
+  const opponentsWithChips = hand.players.some(item => item.id !== playerId && !item.folded &&
+    availableBettingChips(hand, item, findPlayer(room, item.id).stack) > 0);
   const reopened = hp.actedAtBet === null || hand.currentBet - hp.actedAtBet >= hand.minRaise;
   const fullRaiseOrAllIn = maxRaiseTo >= minRaiseTo || maxRaiseTo === allInTo;
-  const canAct = hand.actorId === playerId && !hand.runoutVote && !room.paused && !hp.folded && player.stack > 0;
+  const canAct = hand.actorId === playerId && !hand.runoutVote && !room.paused && !hp.folded && available > 0;
   const canRaise = canAct && opponentsWithChips && reopened && fullRaiseOrAllIn && maxRaiseTo > hand.currentBet;
   return {
     canAct, canCheck: canAct && toCall === 0,
@@ -480,6 +485,7 @@ export function legalActions(room: Room, playerId: string): LegalActions {
     canAllIn: canAct && (allInTo <= hand.currentBet || (canRaise && allInTo <= maxRaiseTo)),
     bettingLimit, potLimitTo, potAfterCall: countedPot + callAmount,
     reason: room.paused ? 'The table is paused' : hand.runoutVote ? 'Waiting for runout choices'
+      : postflopCapRemaining(hand, hp) === 0 ? 'Your post-flop cap has been reached'
       : !reopened ? 'A short all-in did not reopen raising'
       : !opponentsWithChips ? 'No opponent can call another raise'
       : !fullRaiseOrAllIn ? 'The pot limit is below a full minimum raise; only a genuine all-in may be smaller'
@@ -507,19 +513,21 @@ function act(room: Room, actorId: string, command: Extract<Command, { type: 'act
   } else if (command.action === 'call') {
     if (legal.toCall === 0) throw new GameError('Nothing to call. You may check.');
     payIntoPot(room, hp, legal.callAmount, 'bet', fx, 'Call');
-    hp.lastAction = player.stack === 0 ? 'All-in call' : 'Call';
-    text = `${player.name} called ${legal.callAmount.toLocaleString('en-US')}${player.stack === 0 ? ' (all-in)' : ''}.`;
+    const capped = postflopCapRemaining(hand, hp) === 0;
+    hp.lastAction = player.stack === 0 ? 'All-in call' : capped ? 'Capped call' : 'Call';
+    text = `${player.name} called ${legal.callAmount.toLocaleString('en-US')}${player.stack === 0 ? ' (all-in)' : capped ? ' (post-flop cap reached)' : ''}.`;
   } else {
     const amount = command.amount ?? 0;
     if (!legal.canRaise) throw new GameError(legal.reason);
     if (!integer(amount, 1, 1_000_000_000) || amount > legal.maxRaiseTo || amount <= hand.currentBet) throw new GameError('That raise amount is not available.');
-    if (amount < legal.minRaiseTo && amount !== legal.allInTo) throw new GameError(`The minimum raise-to is ${legal.minRaiseTo}. Only an all-in may be smaller.`);
+    if (amount < legal.minRaiseTo && amount !== legal.allInTo) throw new GameError(`The minimum raise-to is ${legal.minRaiseTo}. Only an all-in or cap-ending raise may be smaller.`);
     const increment = amount - hand.currentBet;
     payIntoPot(room, hp, amount - hp.streetBet, 'bet', fx, `Raise to ${amount}`);
     if (increment >= hand.minRaise) hand.minRaise = increment;
     hand.currentBet = amount;
-    hp.lastAction = player.stack === 0 ? 'All-in' : 'Raise';
-    text = `${player.name} raised to ${amount.toLocaleString('en-US')}${player.stack === 0 ? ' (all-in)' : ''}.`;
+    const capped = postflopCapRemaining(hand, hp) === 0;
+    hp.lastAction = player.stack === 0 ? 'All-in' : capped ? 'Capped' : 'Raise';
+    text = `${player.name} raised to ${amount.toLocaleString('en-US')}${player.stack === 0 ? ' (all-in)' : capped ? ' (post-flop cap reached)' : ''}.`;
   }
   hp.actedAtBet = hand.currentBet;
   if (!ctx.system) player.timeoutCount = 0;
@@ -622,24 +630,33 @@ export function assertRoom(room: Room) {
   if (issued !== held) throw new Error(`Chip conservation violated: issued ${issued}, held ${held}.`);
   const hand = room.hand;
   if (hand) {
+    const cap = hand.rules.postflopCap ?? 0;
     validateHandRules(hand.rules, true);
     if (new Set(hand.players.map(player => player.id)).size !== hand.players.length ||
         new Set(hand.players.map(player => player.seat)).size !== hand.players.length ||
         !integer(hand.pot, 0, sessionFundingLimit) || !integer(hand.awardedPot, 0, sessionFundingLimit) ||
         !integer(hand.preflopPotAdjustment, 0, sessionFundingLimit) ||
         hand.players.some(player => !room.players.some(member => member.id === player.id) ||
-          !integer(player.committed, 0, sessionFundingLimit) || !integer(player.streetBet, 0, player.committed)))
+          !integer(player.committed, 0, sessionFundingLimit) || !integer(player.streetBet, 0, player.committed) ||
+          !integer(player.postflopCommitted, 0, player.committed) ||
+          (hand.street === 'preflop' && player.postflopCommitted !== 0) ||
+          (cap > 0 && (player.postflopCommitted > cap ||
+            (hand.street !== 'preflop' && hand.street !== 'complete' && player.postflopCommitted < player.streetBet)))))
       throw new Error('Invalid hand commitments or pot balance.');
     const commitments = hand.players.reduce((sum, player) => sum + player.committed, 0);
     if (commitments !== (activeHand(room) ? hand.pot : hand.awardedPot)) throw new Error('Pot commitments do not balance.');
     assertHandCards(hand);
+    if (hand.street !== 'complete' && !hand.runoutVote &&
+        !hand.players.some(player => player.id === hand.actorId && !player.folded &&
+          availableBettingChips(hand, player, findPlayer(room, player.id).stack) > 0))
+      throw new Error('An active betting turn must belong to a player with chips available under the cap.');
     if (Object.values(hand.bountyAfter).some(value => !Number.isSafeInteger(value)) ||
         Object.values(hand.bountyAfter).reduce((sum, value) => sum + BigInt(value), 0n) !== 0n)
       throw new Error('Invalid bounty settlement snapshot.');
     if (hand.runoutVote) {
       const vote = hand.runoutVote;
       const alive = hand.players.filter(player => !player.folded);
-      const withChips = alive.filter(player => findPlayer(room, player.id).stack > 0);
+      const withChips = alive.filter(player => availableBettingChips(hand, player, findPlayer(room, player.id).stack) > 0);
       const perRun = (5 - hand.board.length) * hand.boards.length + (hand.board.length === 0 ? 3 : hand.board.length === 3 ? 2 : 1);
       if (hand.street === 'complete' || hand.actorId !== null || hand.deadline !== null ||
           hand.board.length === 5 || alive.length < 2 || withChips.length > 1 ||
@@ -712,8 +729,8 @@ export function transition(original: Room, actorId: string, command: Command, ct
     case 'next_hand':
       requireHost(room, actorId);
       validateHandRules(command.rules);
-      room.nextHandRules = { ...command.rules };
-      event(fx, ctx, 'next_hand', `Next-hand rules selected: ${rulesGameLabel(command.rules)}; bomb ante ${command.rules.bombAnte}, Indian round ante ${command.rules.indianAnte}, PLO round ante ${command.rules.omahaAnte}, Hold'em 7-2 offsuit bounty ${command.rules.sevenDeuceBounty}, up to ${command.rules.maxRunouts} runout${command.rules.maxRunouts === 1 ? '' : 's'}. Current-hand rules are unchanged.`, actorId);
+      room.nextHandRules = { ...command.rules, postflopCap: command.rules.postflopCap ?? 0 };
+      event(fx, ctx, 'next_hand', `Next-hand rules selected: ${rulesGameLabel(command.rules)}; bomb ante ${command.rules.bombAnte}, Indian round ante ${command.rules.indianAnte}, Omaha round ante ${command.rules.omahaAnte}, post-flop cap ${command.rules.postflopCap ?? 0} per player (0 is uncapped), Hold'em 7-2 offsuit bounty ${command.rules.sevenDeuceBounty}, up to ${command.rules.maxRunouts} runout${command.rules.maxRunouts === 1 ? '' : 's'}. Current-hand rules are unchanged.`, actorId);
       break;
     case 'runouts': voteRunouts(room, actorId, command, fx, ctx); break;
     case 'fund':
