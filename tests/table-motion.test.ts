@@ -8,6 +8,8 @@ import {
 import { makeDeck } from '../src/server/cards';
 import { assertRoom, createRoom, legalActions, roomView, transition } from '../src/server/engine';
 import { verifyTransfers } from '../src/server/store';
+import { evaluate } from '../src/shared/handEvaluation';
+import { currentHands, describeHand, orderedHandCards, winningHands } from '../src/client/handPresentation';
 
 let now = 1_800_000_000_000;
 const empty = { chips: [], cards: [] };
@@ -267,6 +269,11 @@ describe('bets, refunds and payouts', () => {
     expect(plan.chips.at(-1)!.delay).toBeGreaterThanOrEqual(CHIP_FLIGHT_MS * 2 + 60);
     expect(plan.cards).toEqual([]);
     expect(view(after).players[1]!.cards).toEqual([null, null]);
+    for (const viewer of ['p0', 'p1']) {
+      expect(winningHands(view(after, viewer))).toMatchObject([{
+        playerId: 'p0', amount: 40, description: 'Uncontested', cards: [],
+      }]);
+    }
   });
 
   test('a tied showdown pays exact odd-chip shares after revealing only the live opponent', () => {
@@ -287,6 +294,13 @@ describe('bets, refunds and payouts', () => {
       { kind: 'payout', playerId: 'p0', amount: 4, delay: expect.any(Number) },
     ]);
     expect(plan.chips.every(chip => chip.delay >= CARD_REVEAL_MS)).toBe(true);
+    const wins = winningHands(freeze(view(after)));
+    expect(wins.map(win => [win.playerId, win.amount])).toEqual([['p1', 5], ['p0', 4]]);
+    for (const win of wins) {
+      expect(win).toMatchObject({ description: 'Royal flush', split: true, playsBoard: true });
+      expect(win.cards).toHaveLength(5);
+      expect(win.cards.every(card => !card.hole && card.source.startsWith('board:0:0:'))).toBe(true);
+    }
   });
 
   test('three runouts aggregate main and side-pot shares into one payout per recipient', () => {
@@ -321,6 +335,22 @@ describe('bets, refunds and payouts', () => {
     expect(plan.chips.every(chip => chip.delay >= revealEnd)).toBe(true);
     expect(new Set(plan.chips.map(chip => chip.delay)).size).toBe(1);
     expect(plan.chips.reduce((sum, chip) => sum + chip.amount, 0)).toBe(after.hand!.awardedPot);
+    const wins = winningHands(freeze(view(after)));
+    expect(wins.map(win => [win.runoutIndex, win.playerId, win.amount, win.pots, win.description])).toEqual([
+      [0, 'p0', 100, [0], 'Pair of aces'],
+      [0, 'p1', 67, [1], 'Pair of kings'],
+      [1, 'p1', 167, [0, 1], 'Three of a kind, kings'],
+      [2, 'p2', 166, [0, 1], 'Three of a kind, queens'],
+    ]);
+    expect(wins.reduce((sum, win) => sum + win.amount, 0)).toBe(after.hand!.awardedPot);
+    for (const win of wins) {
+      expect(win.cards).toHaveLength(5);
+      const board = after.hand!.runoutBoards[win.runoutIndex]![win.boardIndex]!;
+      for (const { card, source, hole } of win.cards) {
+        expect(source).toBe(hole ? holeCardKey(win.playerId, after.hand!.revealed[win.playerId]!.indexOf(card))
+          : boardCardKey(win.runoutIndex, win.boardIndex, board.indexOf(card)));
+      }
+    }
   });
 
   test.each(['holdem', 'omaha_bomb'] as const)('%s extra runouts never redeal their shared flop prefixes', game => {
@@ -345,6 +375,86 @@ describe('bets, refunds and payouts', () => {
       for (const [id, amount] of Object.entries(result.shares)) shares.set(id, (shares.get(id) ?? 0) + amount);
     expect(plan.chips.map(({ playerId, amount }) => [playerId, amount])).toEqual([...shares]);
     expect(plan.chips.every(chip => chip.kind === 'payout')).toBe(true);
+    const wins = winningHands(view(after));
+    expect(new Set(wins.map(win => `${win.runoutIndex}:${win.boardIndex}`))).toEqual(
+      new Set([0, 1, 2].flatMap(run => boards.map(board => `${run}:${board}`))),
+    );
+    if (game === 'omaha_bomb') {
+      for (const win of wins) {
+        expect(win.cards.filter(card => card.hole)).toHaveLength(2);
+        expect(win.cards.filter(card => !card.hole)).toHaveLength(3);
+      }
+    }
+  });
+});
+
+describe('hand explanations from redacted snapshots', () => {
+  test.each([
+    ['As Ad Qc Jh 2s', 'Pair of aces', 'As Ad Qc Jh 2s'],
+    ['2c Kd Kh As Ad', 'Two pair, aces and kings', 'As Ad Kd Kh 2c'],
+    ['Ah Ad Ks Kd Kc', 'Full house, kings full of aces', 'Ks Kd Kc Ah Ad'],
+    ['Ac 2d 3s 4h 5d', 'Straight, five high', '5d 4h 3s 2d Ac'],
+    ['As Js 9s 6s 2s', 'Flush, ace high', 'As Js 9s 6s 2s'],
+    ['5h 4h 3h 2h Ah', 'Straight flush, five high', '5h 4h 3h 2h Ah'],
+    ['As Ks Qs Js Ts', 'Royal flush', 'As Ks Qs Js Ts'],
+  ])('names and groups the actual combination for %s', (cards, description, ordered) => {
+    const rank = evaluate(cards.split(' '));
+    expect(describeHand(rank)).toBe(description);
+    expect(orderedHandCards(rank)).toEqual(ordered.split(' '));
+    expect(rank.cards).toEqual(cards.split(' '));
+  });
+
+  test('only the viewer gets their live hand, updated from preflop to the visible board', () => {
+    let room = start(table(), rig('Ks As Kh Ad 2c Ac 9c 7d'.split(' ')));
+    expect(currentHands(freeze(view(room)))).toEqual([{ boardIndex: 0, description: 'Pair of aces' }]);
+    expect(currentHands(view(room, 'p1'))).toEqual([{ boardIndex: 0, description: 'Pair of kings' }]);
+    expect(winningHands(view(room))).toEqual([]);
+    room = act(act(room, 'call'), 'check');
+    const projected = freeze(view(room));
+    expect(projected.players[1]!.cards).toEqual([null, null]);
+    expect(currentHands(projected)).toEqual([{ boardIndex: 0, description: 'Three of a kind, aces' }]);
+    expect(currentHands(view(room, 'p1'))).toEqual([{ boardIndex: 0, description: 'Pair of kings' }]);
+  });
+
+  test('each double-board live hand is evaluated separately', () => {
+    const room = start(table([1000, 1000], { doubleBoard: true, bombPot: true, bombAnte: 20 }),
+      rig('Ks As Kh Ad 2c Ac 9c 7d 2d 3d 4h'.split(' ')));
+    expect(currentHands(view(room))).toEqual([
+      { boardIndex: 0, description: 'Three of a kind, aces' },
+      { boardIndex: 1, description: 'Pair of aces' },
+    ]);
+  });
+
+  test('Omaha never counts three or four hole cards as a made hand', () => {
+    let room = start(table([1000, 1000], { game: 'omaha' }),
+      rig('2c As 3c Ad 4c Ac 5c Ah 6c Ks Kd 7h'.split(' ')));
+    expect(currentHands(view(room))).toEqual([{ boardIndex: 0, description: 'Omaha hand forms on the flop' }]);
+    room = act(act(room, 'call'), 'check');
+    expect(currentHands(view(room))).toEqual([{ boardIndex: 0, description: 'Two pair, aces and kings' }]);
+  });
+
+  test('hidden Indian cards, folded players, incomplete private views, and completed hands have no live rank', () => {
+    const indian = start(table([1000, 1000], { game: 'indian' }));
+    expect(view(indian).players[0]!.cards).toEqual([null, null]);
+    expect(currentHands(view(indian))).toEqual([]);
+    const normal = start(table([1000, 1000, 1000]));
+    const redacted = view(normal);
+    redacted.players[0]!.cards[0] = null;
+    expect(currentHands(redacted)).toEqual([]);
+    const folded = act(normal, 'fold');
+    expect(folded.hand!.street).not.toBe('complete');
+    expect(currentHands(view(folded))).toEqual([]);
+    expect(currentHands(view(act(folded, 'fold')))).toEqual([]);
+  });
+
+  test('a partial voluntary reveal never fills a winning hand from private cards', () => {
+    const finished = act(start(table()), 'fold');
+    const shown = apply(finished, 'p1', { type: 'reveal', handId: finished.hand!.id, cardIndexes: [0] });
+    for (const viewer of ['p0', 'p1']) {
+      const wins = winningHands(view(shown, viewer));
+      expect(wins).toHaveLength(1);
+      expect(wins[0]).toMatchObject({ playerId: 'p1', description: 'Uncontested', cards: [] });
+    }
   });
 });
 

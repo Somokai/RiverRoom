@@ -1,5 +1,7 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
 import { DEFAULT_SETTINGS, defaultHandRules, type Command, type GameVariant, type Identity, type RoomView } from '../../src/shared/model';
+import { evaluate } from '../../src/shared/handEvaluation';
+import { describeHand } from '../../src/client/handPresentation';
 
 async function post(page: Page, origin: string, path: string, body: object, user?: Identity) {
   const response = await page.request.post(`${origin}/api${path}`, {
@@ -93,6 +95,8 @@ test('live card deals and chip bets, refunds and payouts move without blocking p
     await expect(page.locator('.seat:not(.hero-seat) .card-face')).toHaveCount(0);
     await expect(guest.locator('.seat:not(.hero-seat) .card-face')).toHaveCount(0);
     await expect(page.locator('.table-motion-layer .card-face')).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Your current hand', exact: true })).toHaveAttribute('aria-description', /Only you can see this/);
+    await expect(guest.getByRole('region', { name: 'Your current hand', exact: true })).toBeVisible();
     const movement = await page.locator(`[data-card-target="hole:${hostUser.id}:0"]`).evaluate(element => {
       const animation = element.getAnimations()[0]!;
       animation.pause();
@@ -135,6 +139,10 @@ test('live card deals and chip bets, refunds and payouts move without blocking p
     await expectChipPath(page, 'refund', hostUser.id);
     await expectChipPath(page, 'payout', hostUser.id);
     expect(settled.hand?.street).toBe('complete');
+    await expect(page.getByRole('region', { name: 'Your current hand', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Hand results', exact: true })).toContainText('Motion host');
+    await expect(page.locator('.winning-description')).toHaveText('Uncontested (no showdown)');
+    await expect(page.locator('.winning-cards')).toHaveCount(0);
     await finishMotion(page);
     await expect(page.locator('.seat-bet:not(.wager-empty)')).toHaveCount(0);
     await expect(page.locator('.hero-seat .seat-stack')).toHaveText('600');
@@ -239,8 +247,8 @@ test('emotes and mute controls coexist with live animation, wager piles and per-
   } finally { await guestContext.close(); }
 });
 
-test('community streets and multi-run showdowns animate only visible new cards', async ({ page, browser, baseURL }) => {
-  const { guest, guestContext, command } = await setup(page, browser, baseURL!, 'holdem', 2);
+test('community streets and multi-run showdowns animate only visible new cards', async ({ page, browser, baseURL }, testInfo) => {
+  const { room, guest, guestContext, command } = await setup(page, browser, baseURL!, 'holdem', 2);
   try {
     await page.getByRole('button', { name: 'Deal first hand' }).click();
     await finishMotion(page);
@@ -249,6 +257,12 @@ test('community streets and multi-run showdowns animate only visible new cards',
     await command(guest, { type: 'act', action: 'check' });
     await expect(page.locator('.moving-card')).toHaveCount(3);
     await expect(page.locator('[data-card-target="board:0:0:0"]')).toHaveCount(1);
+    for (const client of [page, guest]) {
+      const flop = await current(client, baseURL!, room.id);
+      const own = flop.players.find(player => player.id === flop.youId)!;
+      const rank = evaluate([...own.cards.filter((card): card is string => card !== null), ...flop.hand!.boards[0]!]);
+      await expect(client.getByRole('region', { name: 'Your current hand', exact: true })).toContainText(describeHand(rank));
+    }
     await finishMotion(page);
     await command(guest, { type: 'act', action: 'raise', amount: 400 });
     await expect(page.getByRole('button', { name: /^Call / })).toBeEnabled();
@@ -264,14 +278,82 @@ test('community streets and multi-run showdowns animate only visible new cards',
     await expect(page.locator('[data-card-target="board:0:0:4"]')).toHaveCount(1);
     await expect(page.locator('[data-card-target="board:0:0:0"]')).toHaveCount(0);
     expect(completed.hand?.runoutCount).toBe(2);
+    for (const [runoutIndex] of completed.hand!.runoutBoards.entries()) {
+      const group = page.getByRole('article', { name: `Run ${runoutIndex + 1}, board 1 winners`, exact: true });
+      const awards = completed.hand!.results.filter(result => result.runoutIndex === runoutIndex);
+      const ids = [...new Set(awards.flatMap(result => result.winners))];
+      await expect(group.locator('.winning-hand')).toHaveCount(ids.length);
+      for (const id of ids) {
+        const player = completed.players.find(item => item.id === id)!;
+        const amount = awards.reduce((sum, result) => sum + (result.shares[id] ?? 0), 0);
+        const winner = group.locator(`[data-winner-id="${id}"]`);
+        const rank = evaluate([...completed.hand!.revealed[id]!, ...completed.hand!.runoutBoards[runoutIndex]![0]!]);
+        await expect(winner).toContainText(player.name);
+        await expect(winner.locator('.winning-player')).toContainText(`${amount.toLocaleString('en-US')} chips`);
+        await expect(winner.locator('.winning-description')).toHaveText(describeHand(rank));
+        await expect(winner.locator('.winning-cards .card-face')).toHaveCount(5);
+      }
+    }
+    const winningCard = page.locator('.winning-board').first().locator('[data-winning-animation="gather"]').first();
+    await expect(winningCard).toBeAttached();
+    const gathered = await winningCard.evaluate(element => {
+      const animation = element.getAnimations()[0]!;
+      animation.pause();
+      const timing = animation.effect!.getTiming();
+      animation.currentTime = Number(timing.delay) + Number(timing.duration) * .2;
+      const start = element.getBoundingClientRect();
+      animation.currentTime = Number(timing.delay) + Number(timing.duration) * .8;
+      const end = element.getBoundingClientRect();
+      animation.play();
+      return { distance: Math.hypot(end.x - start.x, end.y - start.y), duration: timing.duration };
+    });
+    expect(gathered.distance).toBeGreaterThan(15);
+    expect(gathered.duration).toBe(650);
     const payouts = await page.locator('.moving-chips[data-motion-kind="payout"]').evaluateAll(elements =>
       elements.reduce((sum, element) => sum + Number((element as HTMLElement).dataset.amount), 0));
     expect(payouts).toBe(1000);
     await expect(page.locator('.seat:not(.hero-seat) .card-face')).toHaveCount(2);
     await finishMotion(page);
+    await expect(page.locator('[data-winning-animation]')).toHaveCount(0);
     await page.getByRole('tab', { name: 'Run 2', exact: true }).click();
     await expect(page.locator('.table-motion-layer')).toHaveCount(0);
+    await expect(page.locator('[data-winning-animation]')).toHaveCount(0);
     await expect(page.getByRole('group', { name: 'Run 2, board 1', exact: true }).locator('.card-face')).toHaveCount(5);
+    await page.reload();
+    await expect(page.getByRole('region', { name: 'Hand results', exact: true })).toBeVisible();
+    await expect(page.locator('[data-winning-animation]')).toHaveCount(0);
+    await page.getByRole('region', { name: 'Hand results', exact: true }).screenshot({ path: testInfo.outputPath('winning-runouts.png') });
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      expect(await page.locator('.winning-cards').evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth))).toBe(true);
+    }
+    await page.getByRole('region', { name: 'Hand results', exact: true }).screenshot({ path: testInfo.outputPath('winning-runouts-mobile.png') });
+  } finally { await guestContext.close(); }
+});
+
+test('a single-run showdown keeps its winning five visible without motion and never replays on reconnect', async ({ page, browser, baseURL }) => {
+  const { guest, guestContext, command } = await setup(page, browser, baseURL!);
+  try {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(page.locator('.table-stage')).toHaveAttribute('data-table-motion', 'off');
+    await page.getByRole('button', { name: 'Deal first hand' }).click();
+    await command(page, { type: 'act', action: 'raise', amount: 500 });
+    const complete = await command(guest, { type: 'act', action: 'call' });
+    const ids = [...new Set(complete.hand!.results.flatMap(result => result.winners))];
+    const results = page.getByRole('region', { name: 'Hand results', exact: true });
+    await expect(results.locator('.winning-hand')).toHaveCount(ids.length);
+    await expect(results.locator('.winning-cards .card-face')).toHaveCount(ids.length * 5);
+    await expect(results.locator('[data-winning-animation]')).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Your current hand', exact: true })).toHaveCount(0);
+    await page.getByLabel('Table animations', { exact: true }).selectOption('on');
+    await expect(results.locator('[data-winning-animation]')).toHaveCount(0);
+    await page.context().setOffline(true);
+    await expect(page.locator('.connection-banner')).toBeVisible();
+    await page.context().setOffline(false);
+    await expect(page.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+    await expect(results.locator('[data-winning-animation]')).toHaveCount(0);
+    await expect(results.locator('.winning-cards .card-face')).toHaveCount(ids.length * 5);
   } finally { await guestContext.close(); }
 });
 
@@ -284,10 +366,15 @@ for (const game of ['omaha_bomb', 'indian'] as const) {
       await expect(page.locator('.moving-card')).toHaveCount(game === 'omaha_bomb' ? 14 : 4);
       await expect(page.locator('.table-motion-layer .card-face')).toHaveCount(0);
       if (game === 'indian') {
+        await expect(page.getByRole('region', { name: 'Your current hand', exact: true })).toContainText('Your cards are hidden in Indian poker.');
         await expect(page.locator('.hero-seat .card-face')).toHaveCount(0);
         await expect(page.locator('.seat:not(.hero-seat) .card-face')).toHaveCount(2);
         await expect(guest.locator('.hero-seat .card-face')).toHaveCount(0);
       } else {
+        const currentHand = page.getByRole('region', { name: 'Your current hand', exact: true });
+        await expect(currentHand).toContainText('Board 1:');
+        await expect(currentHand).toContainText('Board 2:');
+        await expect(currentHand).toHaveAttribute('aria-description', /Use exactly two hole cards and three board cards/);
         await expect(page.locator('[data-card-target^="board:0:1:"]')).toHaveCount(3);
         await expect(page.locator('.seat:not(.hero-seat) .card-face')).toHaveCount(0);
       }

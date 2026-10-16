@@ -7,6 +7,7 @@ import { useCountdown } from './clock';
 import { useTableAnimations } from './TableAnimations';
 import { holeCardKey } from './tableMotion';
 import { EmoteMenu } from './EmoteMenu';
+import { HandResults } from './HandSummary';
 
 export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseEmoji, emojiDisabled = false, live = false, animations = true,
   emotes, mutedEmotes, onEmote, onToggleMute, emoteDisabled, emoteSending, emoteCooldownUntil, emoteError, onReveal, revealDisabled }: {
@@ -66,7 +67,7 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
   const streetName = hand?.street === 'complete' ? 'Hand complete' : vote ? 'Runout decision'
     : legacyIndian ? 'Legacy one-card betting' : hand ? `${hand.street} betting` : 'Waiting for the first hand';
 
-  return <div ref={motion.surface} role="region" data-room-version={room.version} data-street={hand?.street ?? 'waiting'} data-table-motion={animations ? 'on' : 'off'} className={`table-stage ${room.settings.maxSeats >= 8 ? 'table-crowded' : ''} ${doubleBoard ? 'table-double-board' : ''} ${indian ? 'table-indian' : ''} ${room.paused ? 'table-is-paused' : ''}`}
+  return <><div ref={motion.surface} role="region" data-room-version={room.version} data-street={hand?.street ?? 'waiting'} data-table-motion={animations ? 'on' : 'off'} className={`table-stage ${room.settings.maxSeats >= 8 ? 'table-crowded' : ''} ${doubleBoard ? 'table-double-board' : ''} ${indian ? 'table-indian' : ''} ${room.paused ? 'table-is-paused' : ''}`}
     aria-description={`${hand ? handGameLabel(hand) : rulesGameLabel(rules)}. ${streetName}.${room.paused ? ' Table paused.' : ''}`}
     style={{ '--compact-table-height': `${compactHero + 95}px`, '--compact-community-y': `${compactCommunity}px` } as CSSProperties} aria-label="Poker table">
     <div className="table-shadow" /><div className="table-rail"><div className="table-felt" /></div>
@@ -79,7 +80,7 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
         <strong>{chips(motion.pot)}</strong></div>
         {!legacyIndian && <CommunityBoards hand={hand} motion onRunChange={motion.cancel} />}
         {hand.street === 'complete' && <div className="hand-outcome" role="img"
-          aria-label={winnerLabel} title={winnerLabel}><Crown size={14} aria-hidden="true" /></div>}
+          aria-label={winnerLabel} title={winnerLabel}><Crown size={14} aria-hidden="true" /><span>{winnerNames ? `${winnerNames} won` : 'Hand complete'}</span></div>}
       </> : <div className="waiting-table" role="img" aria-label="Waiting for the first hand"><Spade size={35} strokeWidth={1} aria-hidden="true" /></div>}
       {room.paused && <span className="paused-overlay" role="img" aria-label="Table paused" title="Table paused"><Pause size={14} aria-hidden="true" /></span>}
     </div>
@@ -128,6 +129,7 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
             <strong className="seat-stack" data-motion-stack={player.id}>{chips(player.stack)}</strong>
             {turn ? <TurnClock deadline={hand.deadline} timeOffset={timeOffset} paused={room.paused} turnSeconds={room.settings.turnSeconds} />
               : <span className="seat-action">{room.status === 'closed' ? 'Cashed out'
+              : hand?.street === 'complete' && winners.has(player.id) ? `Won ${chips(hand.results.reduce((sum, result) => sum + (result.shares[player.id] ?? 0), 0))}`
               : runoutEligible ? runoutChoice ? `Runout: ${runoutChoice === 1 ? 'once' : `up to ${runoutChoice}`}` : 'Runout: pending'
                 : folded ? 'Folded' : player.stack === 0 && player.hand && active ? 'ALL IN'
                   : active && player.hand && postflopCapRemaining(hand, player.hand) === 0 ? 'CAPPED'
@@ -162,7 +164,7 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
       name={menuPlayer.name} muted={mutedEmotes.has(menu.playerId)} disabled={emoteDisabled}
       sending={emoteSending} cooldownUntil={emoteCooldownUntil} error={emoteError} send={onEmote}
       toggleMute={() => onToggleMute(menu.playerId)} close={closeMenu} />}
-  </div>;
+  </div><HandResults room={room} table={motion.surface} live={live} animations={animations} /></>;
 });
 
 function TurnClock({ deadline, timeOffset, paused, turnSeconds }: {
