@@ -765,6 +765,65 @@ test('emoji interactions avoid recurring formatting work and delayed hover feedb
   await expect(trigger).toBeFocused();
 });
 
+test('essential text stays readable and high contrast on desktop and phone', async ({ page }, testInfo) => {
+  const room = await createTable(page, 'Readable poker', 4);
+  for (let index = 0; index < 3; index++) await serverCommand(page, room.id, { type: 'add_bot' });
+  await page.getByRole('button', { name: 'Deal first hand', exact: true }).click();
+  await serverCommand(page, room.id, { type: 'pause', value: true });
+  const contrast = (foreground: string, background: string) => {
+    const rgb = (color: string) => color.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    const luminance = (color: number[]) => color.map(value => {
+      const channel = value / 255;
+      return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+    }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index]!, 0);
+    const values = [luminance(rgb(foreground)), luminance(rgb(background))].sort((a, b) => a - b);
+    return (values[1]! + .05) / (values[0]! + .05);
+  };
+  const samples: Array<[string, number, string]> = [
+    ['.table-meta', 12, 'rgb(17, 22, 19)'],
+    ['.turn-heading', 12, 'rgb(35, 48, 36)'],
+    ['.preset-label', 12, 'rgb(35, 48, 36)'],
+    ['.preset-button', 14, 'rgb(35, 48, 36)'],
+    ['.sizing-note', 12, 'rgb(35, 48, 36)'],
+    ['.bankroll-details', 12, 'rgb(36, 48, 36)'],
+    ['.player-details > span', 12, 'rgb(26, 34, 27)'],
+    ['.session-tools > button small', 12, 'rgb(17, 22, 19)'],
+    ['.hand-rules-summary span', 12, 'rgb(32, 43, 33)'],
+    ['.mixed-house-rules p', 14, 'rgb(32, 43, 33)'],
+  ];
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const [selector, minimum, background] of samples) {
+      const metrics = await page.locator(selector).evaluateAll(elements => elements.map(element => {
+        const style = getComputedStyle(element);
+        return { font: parseFloat(style.fontSize), color: style.color, text: element.textContent };
+      }));
+      expect(metrics.length, selector).toBeGreaterThan(0);
+      for (const metric of metrics) {
+        expect(metric.font, `${selector} at ${width}px`).toBeGreaterThanOrEqual(minimum);
+        expect(contrast(metric.color, background), `${selector} contrast at ${width}px`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    const seatText = await page.locator('.seat-name, .seat-action, .position-badge, .seat-bet').evaluateAll(elements =>
+      elements.map(element => parseFloat(getComputedStyle(element).fontSize) * new DOMMatrix(getComputedStyle(element.closest('.seat')!).transform).a));
+    expect(seatText.every(size => size >= 12)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.getByRole('button', { name: 'House rules', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    const inputs = await dialog.locator('input:not([type="checkbox"]), select').evaluateAll(elements => elements.map(element => parseFloat(getComputedStyle(element).fontSize)));
+    expect(inputs.length).toBeGreaterThan(0);
+    expect(inputs.every(size => size >= 16)).toBe(true);
+    await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+    await page.screenshot({ path: testInfo.outputPath(`readability-${width}.png`), fullPage: true, animations: 'disabled' });
+  }
+  await page.goto('/');
+  await expect(page.locator('.feature-grid')).toBeVisible();
+  expect(await page.locator('.feature-grid p').evaluateAll(elements => elements.every(element => parseFloat(getComputedStyle(element).fontSize) >= 14))).toBe(true);
+  await page.getByRole('button', { name: 'My stats', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  expect(await page.locator('.stats-notes p, .stat-card p').evaluateAll(elements => elements.every(element => parseFloat(getComputedStyle(element).fontSize) >= 12))).toBe(true);
+});
+
 test('desktop and phone layouts expose real controls without horizontal overflow', async ({ page, browser }) => {
   const folder = resolve('preview');
   await mkdir(folder, { recursive: true });

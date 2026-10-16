@@ -1,0 +1,145 @@
+/* Shared type roles override the compact component styles, including their mobile reductions. */
+:root {
+  --text-caption: .75rem;
+  --text-body: .875rem;
+  --text-control: 1rem;
+  --muted: #b5c3b9;
+}
+body { font-size: var(--text-control); }
+input::placeholder { color: #a6b7ab; }
+button:disabled, .profile-emoji-button[aria-disabled="true"] { opacity: .6; }
+
+.eyebrow, .brand small, .private-pill, .hero-copy .eyebrow,
+.hero-note, .feature-grid p, .section-heading > .muted, .session-title,
+.status-tag, .session-card p, .session-bottom small, .session-breakdown > span,
+.session-breakdown small, .lobby-footer, .modal-heading p, .stats-sample > span,
+.stat-card h3 small, .stat-sample, .stat-card p, .stats-notes p, .emoji-count,
+.emoji-group h3, .emoji-footer > span, .field > span, .field small, .form-note,
+.game-nav-center, .table-title-row .eyebrow, .host-label, .table-meta,
+.paused-overlay, .turn-heading, .action-heading > .muted, .preset-label,
+.raise-input span, .action-buttons small, .sizing-note, .premove-label,
+.reveal-label, .reveal-controls button, .table-footer, .table-footer .text-button,
+.bankroll-title, .bankroll-title > span:last-child, .bankroll-main > div > small,
+.bankroll-main > div > strong > span, .bankroll-main > div > .muted, .net-badge small,
+.bankroll-details, .player-details strong small, .player-details > span,
+.player-money small, .chat-event time, .session-tools > .eyebrow,
+.session-tools > button small, .sidebar-note, .count-badge, .approval-row small,
+.approvals .form-note, .funding-total > span, .funding-total small,
+.ledger-summary > div > span, .ledger-summary small, .ledger-summary strong small,
+.data-table th, .data-table td small, .record-footer > span,
+.hand-history header > span, .history-pot small, .showdown-row small,
+.audit-list time, .audit-list code, .board-label, .table-double-board .board-label, .balance-note,
+.bounty-award small, .next-hand-panel .eyebrow, .hand-rules-summary small,
+.hand-rules-summary span, .mixed-house-rules > strong, .runout-clock,
+.runout-players li small, .runout-players strong, .runout-decision .runout-deck-note,
+.hand-history article > header small, .history-rules, .history-result small,
+.history-balances p, .emote-menu-heading, .emote-menu-note, .emote-menu-error,
+.moving-chip-amount, .moving-chip-amount small, .motion-preference,
+.motion-preference select {
+  font-size: var(--text-caption);
+}
+
+.button, .button-small, .hero-actions .button, .text-button, .profile-chip,
+.emoji-categories button, .checkbox, .empty-state, .error-banner, .info-banner,
+.connection-banner, .toast, .preset-button, .action-buttons .button,
+.between-actions .button, .bankroll-actions .button, .panel-tabs button,
+.player-details strong, .player-money strong, .chat-event, .chat-message p,
+.session-tools > button > span, .approvals h3, .approval-row strong,
+.record-tools .button, .data-table, .hand-history article > header,
+.history-board .muted, .history-result, .showdown-row, .audit-list header,
+.audit-list p, .variant-guidance, .bounty-award strong, .bounty-award p,
+.hand-rules-summary strong, .hand-attributes legend, .next-hand-explainer,
+.mixed-house-rules p, .run-tabs button, .table-double-board .run-tabs button, .runout-decision > p,
+.runout-players li > span, .runout-choices .button, .record-bounty-note,
+.empty-board, .history-balances summary, .history-balances > div,
+.emote-mute-choice, .next-hand-panel header .button, .record-footer .button {
+  font-size: var(--text-body);
+}
+.field input, .field select, .emoji-search input, .chat-form input { font-size: var(--text-control); }
+.field input, .field select { height: auto; min-height: 46px; }
+.action-buttons .button-allin { font-size: var(--text-body) !important; }
+.action-buttons strong { font-size: var(--text-control); }
+.eyebrow, .brand small, .private-pill, .game-nav-center, .host-label,
+.turn-heading, .bankroll-title, .bankroll-main > div > small,
+.net-badge small, .session-tools > .eyebrow, .next-hand-panel .eyebrow,
+.mixed-house-rules > strong { letter-spacing: .06em; }
+
+.hero-note, .feature-grid p, .hero-copy > p, .lobby-footer, .modal-heading p,
+.field small, .form-note, .table-meta, .preset-label, .raise-input span,
+.sizing-note, .table-footer, .bankroll-title > span:last-child,
+.bankroll-main > div > small, .bankroll-main > div > strong > span,
+.bankroll-main > div > .muted, .net-badge small, .bankroll-details,
+.panel-tabs button:not(.tab-active), .player-details > span, .chat-event,
+.chat-event time, .session-tools > .eyebrow, .session-tools > button small,
+.sidebar-note, .funding-total small, .ledger-summary small, .data-table td small,
+.transfer-cell > span, .hand-history header > span, .history-pot small,
+.showdown-row small, .audit-list time, .audit-list code { color: var(--muted); }
+.hero-copy > p { font-size: var(--text-control); }
+.red-suit { color: #a73532; }
+.feature-grid h3 { font-size: var(--text-control); }
+.feature-grid p { font-size: var(--text-body); }
+.session-breakdown > span, .session-breakdown small { color: var(--muted); }
+.bet-sizing, .presets, .table-meta { flex-wrap: wrap; }
+.bet-sizing { gap: 14px; }
+.presets { row-gap: 8px; }
+.preset-button { min-height: 36px; height: auto; }
+.raise-input input { width: 90px; font-size: 1.125rem; }
+.action-heading { flex-wrap: wrap; }
+.action-heading > .muted { max-width: none; }
+.bankroll-title { flex-wrap: wrap; gap: 8px; }
+.bankroll-details > span { gap: 12px; }
+.table-footer > div { flex-wrap: wrap; }
+.motion-preference select { max-width: none; }
+
+.seat-name, .hero-seat .seat-name { font-size: .75rem; line-height: 1.2; }
+.seat-name small, .seat-action, .seat-bet, .seat .seat-bet,
+.position-badge, .dealer-badge, .blind-badge, .empty-seat small {
+  font-size: .625rem;
+  line-height: 1.2;
+}
+.seat-action { height: 12px; color: #c2d3bc; letter-spacing: 0; }
+.seat-name small { color: #f0daa1; }
+.seat-stack { font-size: 1.125rem; line-height: 1.2; }
+.hero-seat .seat-stack { font-size: 1.25rem; }
+.seat-panel { padding-top: 8px; padding-bottom: 5px; }
+.hero-seat .seat-panel { padding-top: 16px; }
+.seat-folded:not(.seat-showing) { opacity: .8; }
+.empty-seat { color: #b9cdb7; }
+.empty-seat small { letter-spacing: 0; }
+.reveal-controls { height: auto; min-height: 36px; flex-wrap: wrap; justify-content: center; }
+.reveal-controls button { height: auto; min-height: 28px; }
+.emote-menu-note, .emote-menu-error { line-height: 1.6; }
+
+@media (max-width: 700px) {
+  .brand small { display: none; }
+}
+@media (min-width: 601px) and (max-width: 1200px) {
+  .table-stage.table-double-board { min-height: 560px; max-height: none; }
+  .table-stage.table-double-board.table-crowded { min-height: 720px; }
+}
+@media (max-width: 600px) {
+  .game-main { padding-top: 8px; }
+  .table-title-row { margin-bottom: 10px; }
+  .table-title-row h1 { margin-top: 6px; }
+  .table-stage, .table-stage.table-crowded { margin-top: 8px; }
+  .table-title-actions .button { font-size: 0; }
+  .table-meta { gap: 8px 12px; justify-content: flex-start; }
+  .seat-name, .hero-seat .seat-name { font-size: .625rem; }
+  .seat-stack { font-size: .9375rem; }
+  .hero-seat .seat-stack { font-size: 1.125rem; }
+  .seat-panel { padding-top: 6px; padding-bottom: 4px; }
+  .hero-seat .seat-panel { padding-top: 14px; }
+  .presets { justify-content: flex-start; gap: 3px; }
+  .preset-button { min-width: 32px; padding-inline: 4px; }
+  .action-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .action-buttons .button { min-height: 48px; }
+  .action-buttons strong { font-size: 1.125rem; }
+  .action-console { padding-top: 12px; }
+  .action-heading { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .action-heading .turn-heading { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .action-heading > .muted { text-align: left; }
+  .next-hand-panel > header { align-items: flex-start; flex-wrap: wrap; }
+  .hand-history article > header, .record-footer { flex-wrap: wrap; }
+  .record-footer > span { max-width: 100%; }
+  .emote-menu-heading, .emote-menu-note, .emote-menu-error { font-size: var(--text-caption); }
+}
