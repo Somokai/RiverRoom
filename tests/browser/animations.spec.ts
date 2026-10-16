@@ -46,7 +46,7 @@ async function setup(page: Page, browser: Browser, origin: string, game: GameVar
   return { room, guest, guestContext, hostUser, guestUser, command };
 }
 async function finishMotion(page: Page) {
-  await expect(page.locator('.street-label')).not.toHaveText('THE NIGHT IS YOUNG');
+  await expect(page.locator('.table-stage')).not.toHaveAttribute('data-street', 'waiting');
   await expect(page.locator('.table-motion-layer')).toHaveCount(0, { timeout: 7000 });
   expect(await page.locator('[data-motion-card]').evaluateAll(elements =>
     elements.every(element => getComputedStyle(element).opacity === '1'))).toBe(true);
@@ -116,7 +116,7 @@ test('live card deals and chip bets, refunds and payouts move without blocking p
     await expect(bet).toHaveAttribute('data-player-id', hostUser.id);
     expect(raised.hand?.pot).toBe(400);
     await expect(page.locator('.pot-display strong')).toHaveText('0');
-    await expect(page.locator('.pot-inclusive')).toHaveText('Total with bets: 400');
+    await expect(page.locator('.pot-display')).toHaveAttribute('aria-description', 'Total including street wagers: 400 chips');
     await expect(page.locator('.hero-seat .seat-bet')).toHaveAttribute('data-wager-amount', '300');
     await expect(guest.getByRole('button', { name: 'Fold', exact: true })).toBeEnabled();
     await expectChipPath(page, 'bet', hostUser.id);
@@ -165,7 +165,7 @@ test('raises and reraises build seat piles, then the closing call collects them 
     await expect(page.locator('.hero-seat .seat-bet')).toHaveAttribute('data-wager-amount', '200');
     await expect(page.locator('.seat:not(.hero-seat) .seat-bet')).toHaveAttribute('data-wager-amount', '400');
     await expect(page.locator('.pot-display strong')).toHaveText('0');
-    await expect(page.locator('.pot-inclusive')).toHaveText('Total with bets: 600');
+    await expect(page.locator('.pot-display')).toHaveAttribute('aria-description', 'Total including street wagers: 600 chips');
     await page.screenshot({ path: testInfo.outputPath('raised-street-wagers.png'), animations: 'disabled' });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: testInfo.outputPath('raised-street-wagers-mobile.png'), animations: 'disabled', fullPage: true });
@@ -186,7 +186,7 @@ test('raises and reraises build seat piles, then the closing call collects them 
     await command(guest, { type: 'act', action: 'raise', amount: 100 });
     await expect(page.locator('.seat:not(.hero-seat) .seat-bet')).toHaveAttribute('data-wager-amount', '100');
     await expect(page.locator('.pot-display strong')).toHaveText('800');
-    await expect(page.locator('.pot-inclusive')).toHaveText('Total with bets: 900');
+    await expect(page.locator('.pot-display')).toHaveAttribute('aria-description', 'Total including street wagers: 900 chips');
     await expect(page.locator('.table-motion-layer')).toHaveCount(0);
     await page.reload();
     await expect(page.locator('.game-nav-center')).toHaveText('LIVE TABLE');
@@ -307,7 +307,7 @@ test('motion preferences persist, follow reduced motion and cancel active flight
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await expect(page.locator('.table-stage')).toHaveAttribute('data-table-motion', 'off');
     await page.getByRole('button', { name: 'Deal first hand' }).click();
-    await expect(page.locator('.street-label')).toHaveText('PREFLOP');
+    await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'preflop');
     await expect(page.locator('.table-motion-layer')).toHaveCount(0);
     await page.getByLabel('Table animations', { exact: true }).selectOption('on');
     await expect(page.locator('.table-stage')).toHaveAttribute('data-table-motion', 'on');

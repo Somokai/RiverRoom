@@ -40,20 +40,12 @@
 .table-felt { position: relative; width: 100%; height: 100%; border-radius: 48%; background: radial-gradient(ellipse at 50% 40%, #245d47, #193e30 90%); border: 1px solid #081d1570; box-shadow: inset 0 6px 28px #0006; overflow: hidden; }
 .table-felt:before { content: ""; position: absolute; inset: 18px; border: 1px solid #b2c6971b; border-radius: 48%; }
 .table-felt:after { content: ""; position: absolute; inset: 0; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 140 140' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Cpath fill='%23fff' opacity='.065' filter='url(%23n)' d='M0 0h140v140H0z'/%3E%3C/svg%3E"); opacity: .16; pointer-events: none; }
-.felt-wordmark { position: absolute; top: 35px; left: 0; right: 0; display: flex; align-items: center; justify-content: center; gap: 9px; color: #e0dab245; font-family: Georgia, serif; font-size: 14px; letter-spacing: 3.5px; }
-.felt-subtitle { position: absolute; top: 58px; left: 0; right: 0; text-align: center; color: #d6debd30; font-size: 5px; letter-spacing: 3px; }
 .community { position: absolute; z-index: 2; top: 48%; left: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; width: max-content; max-width: 74%; }
-.street-label { color: #b6ccb1; font-size: 7px; letter-spacing: 2.5px; margin-bottom: 7px; }
 .pot-display { display: flex; align-items: center; gap: 5px; margin-bottom: 12px; }
-.pot-display small { display: block; font-size: 6px; color: #b6cbb2; letter-spacing: 1.7px; margin-bottom: 4px; }
 .pot-display strong { font-size: 25px; letter-spacing: -.4px; line-height: 1; color: #eee7ce; font-weight: 500; }
 .board-cards { display: flex; gap: 6px; }
-.pot-caption { margin-top: 14px; font-size: 8px; color: #c6dac69c; }
 .waiting-table { text-align: center; color: #c0d2b5; margin-top: 8px; }.waiting-table > svg { color: #b7cba966; margin-bottom: 5px; }
-.waiting-table h2 { font-family: Georgia, serif; font-size: 22px; color: #dde1cb; margin: 4px 0 10px; }
-.waiting-table p { font-size: 10px; line-height: 1.8; margin-bottom: 0; color: #a3b99d; }
-.hand-outcome { display: flex; align-items: center; gap: 7px; margin-top: 13px; font-size: 10px; color: #e4d69d; text-align: center; max-width: 320px; }
-.hand-outcome small { display: block; margin-top: 3px; color: #bdcdb2; font-size: 8px; }
+.hand-outcome { display: flex; justify-content: center; margin-top: 13px; color: #e4d69d; }
 .paused-overlay { margin-top: 11px; display: flex; align-items: center; gap: 6px; font-size: 8px; letter-spacing: 1px; background: #0d211a; border: 1px solid #bbbf8970; padding: 6px 10px; border-radius: 4px; color: #e8ce8f; }
 .seat { --seat-width: 114px; --seat-half: calc(var(--seat-width) * var(--seat-scale) / 2); position: absolute; left: clamp(var(--seat-half), var(--seat-x), calc(100% - var(--seat-half))); top: var(--seat-y); transform: translate(-50%, -50%) scale(var(--seat-scale)); width: var(--seat-width); z-index: 3; text-align: center; }
 .seat-cards { display: flex; justify-content: center; gap: 2px; height: 37px; margin-bottom: -14px; position: relative; z-index: 2; pointer-events: none; }
@@ -186,19 +178,15 @@
 .run-tabs button[aria-selected="true"] { background: #dbc38a; border-color: #e9d4a2; color: #272d1e; font-weight: 600; }
 .boards-panel:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; border-radius: 4px; }
 .table-double-board .community { top: 48%; }
-.table-double-board .street-label { margin-bottom: 4px; }
 .table-double-board .pot-display { margin-bottom: 6px; }
 .table-double-board .pot-display strong { font-size: 22px; }
 .table-double-board .board-cards .playing-card { width: 43px; height: 60px; }
 .table-double-board .board-cards .card-corner strong { font-size: 14px; }
 .table-double-board .board-cards .corner-bottom { display: none; }
 .table-double-board .board-cards .card-suit { font-size: 28px; margin: 8px 0 0 6px; }
-.table-double-board .hand-outcome, .table-double-board .pot-caption { margin-top: 8px; }
+.table-double-board .hand-outcome { margin-top: 8px; }
 .four-card-seat .seat-cards .playing-card + .playing-card { margin-left: -8px; }
 .hero-seat.four-card-seat .seat-cards .playing-card + .playing-card { margin-left: -15px; }
-.indian-table-note { display: grid; gap: 8px; max-width: 220px; text-align: center; color: #d6dfc9; }
-.indian-table-note strong { font-family: var(--serif); font-size: 17px; font-weight: 400; }
-.indian-table-note span { font-size: 10px; line-height: 1.7; color: #c0d2b5; }
 .variant-guidance { font-size: 11px; line-height: 1.7; color: #bccdb4; padding: 0 0 12px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
 .variant-guidance b { color: #e0cca0; }
 .limit-explanation { display: block; margin-top: 5px; }
@@ -261,7 +249,7 @@
 .hand-history article > header { margin-bottom: 12px; }
 .history-rules { font-size: 10px; color: #aabc9b; line-height: 1.8; margin-bottom: 14px; }
 .history-result small { display: block; font-size: 8px; color: #a9bd97; margin-top: 5px; }
-.history-result strong, .hand-outcome { overflow-wrap: anywhere; }
+.history-result strong { overflow-wrap: anywhere; }
 .history-balances { margin-top: 17px; border-top: 1px solid var(--line); padding-top: 12px; }
 .history-balances summary { color: #c3cbae; font-size: 11px; cursor: pointer; padding: 6px 0; }
 .history-balances summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
@@ -293,7 +281,7 @@
   .table-meta { font-size: 8px; padding: 0 2px; }.table-meta > span { gap: 3px; }.table-meta .middot { padding: 0 3px; }
   .table-stage, .table-stage.table-crowded { height: var(--compact-table-height); margin: 12px -3px 30px; max-height: none; }.table-rail { inset: 49px 16px 69px; border-radius: 42%; padding: 9px; }.table-felt { border-radius: 42%; }.table-felt:before { inset: 12px; border-radius: 42%; }
   .reveal-controls { top: calc(var(--compact-table-height) - 14px); }
-  .table-shadow { inset: 65px 20px 65px; }.felt-wordmark { font-size: 10px; letter-spacing: 2px; top: 36px; }.felt-wordmark > svg { width: 10px; }.felt-subtitle { top: 56px; font-size: 4px; letter-spacing: 1.6px; }
+  .table-shadow { inset: 65px 20px 65px; }
   .seat { --seat-width: 82px; left: clamp(var(--seat-half), var(--compact-seat-x), calc(100% - var(--seat-half))); top: var(--compact-seat-y); }.seat-avatar { height: 29px; width: 29px; border-width: 2px; font-size: 8px; }.seat-avatar svg { width: 15px; }.seat-avatar-wrap { height: 24px; }.seat-panel { border-radius: 7px; padding: 8px 4px 6px; }
   .seat-name { font-size: 8px; }.seat-name small { font-size: 5px; }.seat-stack { font-size: 12px; margin-top: 4px; }.seat-action { font-size: 6px; margin-top: 3px; height: 8px; }
   .seat-cards { height: 28px; margin-bottom: -10px; gap: 1px; }.seat-cards .card-small { width: 24px; height: 33px; }.seat-cards .card-small .card-corner { top: 3px; left: 3px; }.seat-cards .card-small .card-corner strong { font-size: 10px; }.seat-cards .card-small .card-suit { font-size: 17px; margin: 10px 0 0 3px; }
@@ -302,8 +290,8 @@
   .hero-seat { --seat-width: 105px; }.hero-seat .seat-cards { height: 50px; margin-bottom: -27px; }.hero-seat .seat-cards .playing-card { width: 36px; height: 51px; }.hero-seat .card-corner strong { font-size: 15px; }.hero-seat .card-suit { font-size: 25px; }
   .hero-seat .seat-name { font-size: 9px; }.hero-seat .seat-stack { font-size: 15px; }.hero-seat .seat-panel { padding-top: 15px; }.hero-seat .seat-avatar-wrap { height: 25px; }.empty-seat { width: 50px; height: 50px; }.empty-seat small { font-size: 4px; }
   .community { top: var(--compact-community-y); max-width: 72%; }.board-cards { gap: 3px; }.board-cards .playing-card { width: 34px; height: 49px; border-radius: 4px; }.board-cards .card-corner { top: 4px; left: 4px; }.board-cards .card-corner strong { font-size: 13px; }.board-cards .corner-bottom { display: none; }.board-cards .card-suit { font-size: 25px; margin: 8px 0 0 4px; }.board-cards .card-placeholder svg { width: 17px; }
-  .pot-display strong { font-size: 23px; }.pot-display { margin-bottom: 12px; }.pot-display small { font-size: 5px; }.street-label { font-size: 6px; letter-spacing: 1.8px; }.pot-caption { font-size: 6px; margin-top: 12px; }.hand-outcome { max-width: 186px; font-size: 8px; line-height: 1.4; }.hand-outcome small { font-size: 6px; }
-  .waiting-table h2 { font-size: 19px; }.waiting-table p { font-size: 8px; }.waiting-table > svg { width: 29px; }.waiting-table { max-width: 180px; }.paused-overlay { font-size: 6px; padding: 5px 8px; }.paused-overlay svg { width: 11px; }
+  .pot-display strong { font-size: 23px; }.pot-display { margin-bottom: 12px; }
+  .waiting-table > svg { width: 29px; }.paused-overlay { padding: 5px 8px; }.paused-overlay svg { width: 11px; }
   .action-console { padding: 15px 12px 10px; }.action-heading { gap: 9px; margin-bottom: 10px; }.turn-heading { font-size: 7px; letter-spacing: .9px; }.action-heading > .muted { font-size: 8px; max-width: 54%; }
   .bet-sizing { flex-wrap: wrap; gap: 12px; }.presets { width: 100%; justify-content: space-between; gap: 3px; }.preset-button { min-width: 32px; font-size: 10px; padding: 4px 6px; height: 32px; }.preset-label { font-size: 6px; margin-right: 1px; }.preset-divider { margin: 0 3px; }
   .raise-input { width: 100%; justify-content: space-between; padding: 7px 10px; }.raise-input span { font-size: 7px; }.raise-input input { width: 90px; font-size: 17px; }.bet-slider { margin: 12px 0 15px; }
@@ -324,9 +312,7 @@
   .table-double-board .board-cards .card-suit { font-size: 22px; margin: 10px 0 0 4px; }
   .table-double-board .board-label { font-size: 7px; letter-spacing: .7px; }
   .table-double-board .pot-display strong { font-size: 21px; }
-  .table-double-board .pot-caption { max-width: 178px; text-align: center; line-height: 1.6; }
   .run-tabs { gap: 2px; }.run-tabs button { min-height: 35px; padding: 5px 7px; font-size: 10px; }
-  .indian-table-note { max-width: 170px; }.indian-table-note strong { font-size: 15px; }.indian-table-note span { font-size: 9px; }
   .variant-guidance { font-size: 10px; }.balance-note { font-size: 10px; }.bounty-award { padding: 12px; }
   .bounty-award strong { font-size: 11px; }.bounty-award p, .bounty-award small { font-size: 10px; }
   .next-hand-panel { padding: 15px; margin-top: 20px; }.next-hand-panel > header { gap: 8px; }

@@ -11,7 +11,7 @@ function handView(base: RoomView, game: GameVariant = 'holdem'): RoomView {
   const host = { ...room.players[0]!, seat: 0, cards: [] };
   room.players = [host, { ...host, id: 'fixture-riley', name: 'Riley', seat: 1 }];
   const participants = room.players.map((player, index) => ({
-    id: player.id, seat: index, committed: ante + (anteOnly ? 0 : index ? 100 : 50),
+    id: player.id, seat: index, committed: ante + (anteOnly ? 0 : index ? 100 : 50), postflopCommitted: 0,
     streetBet: anteOnly ? 0 : index ? 100 : 50, folded: false, actedAtBet: null, lastAction: anteOnly ? 'Ante' : index ? 'Big blind' : 'Small blind',
   }));
   const boards = game === 'omaha_bomb' ? [['2h', '3c', '4s'], ['5d', '6h', '7c']] : [[]];
@@ -278,8 +278,9 @@ test('future-game selection stays queued and cannot change active cards or rules
   const state = await openFixture(page, baseURL!);
   const activeRules = structuredClone(state.room.hand!.rules);
   await page.getByRole('button', { name: 'Choose next hand', exact: true }).click();
-  await expect(page.getByLabel('PLO (four cards, pot limit)', { exact: true })).toBeFocused();
-  await page.getByLabel('PLO (four cards, pot limit)', { exact: true }).check();
+  await expect(page.getByLabel('Omaha (four cards)', { exact: true })).toBeFocused();
+  await page.getByLabel('Omaha (four cards)', { exact: true }).check();
+  await page.getByLabel('Pot limit', { exact: true }).check();
   await page.getByLabel('Double board', { exact: true }).check();
   await page.getByLabel('Bomb pot', { exact: true }).check();
   await page.getByLabel('Bomb ante (chips per player)').fill('75');
@@ -294,7 +295,8 @@ test('future-game selection stays queued and cannot change active cards or rules
   await page.reload();
   await expect(page.locator('.queued-hand-rules')).toContainText('Double-board PLO bomb pot');
   await page.getByRole('button', { name: 'Choose next hand', exact: true }).click();
-  await page.getByLabel('PLO (four cards, pot limit)', { exact: true }).uncheck();
+  await page.getByLabel('Omaha (four cards)', { exact: true }).uncheck();
+  await page.getByLabel('Pot limit', { exact: true }).uncheck();
   await page.getByLabel('Double board', { exact: true }).uncheck();
   await page.getByLabel('Bomb pot', { exact: true }).uncheck();
   await page.getByLabel('Indian (face-out cards)', { exact: true }).check();
@@ -308,10 +310,11 @@ test('future-game selection stays queued and cannot change active cards or rules
   expect(state.commands.at(-1)).toMatchObject({ type: 'next_hand', rules: { game: 'indian', indianAnte: 25, maxRunouts: 3 } });
   await page.getByRole('button', { name: 'Choose next hand', exact: true }).click();
   await page.getByLabel('Indian (face-out cards)', { exact: true }).uncheck();
-  await page.getByLabel('PLO (four cards, pot limit)', { exact: true }).check();
-  await page.getByLabel('PLO round buy-in (ante per player)').fill('0');
+  await page.getByLabel('Omaha (four cards)', { exact: true }).check();
+  await page.getByLabel('Pot limit', { exact: true }).check();
+  await page.getByLabel('Omaha round buy-in (ante per player)').fill('0');
   await expect(page.getByRole('button', { name: 'Save next-hand rules', exact: true })).toBeDisabled();
-  await page.getByLabel('PLO round buy-in (ante per player)').fill('35');
+  await page.getByLabel('Omaha round buy-in (ante per player)').fill('35');
   await page.getByRole('button', { name: 'Save next-hand rules', exact: true }).click();
   expect(state.commands.at(-1)).toMatchObject({ type: 'next_hand', rules: { game: 'omaha', omahaAnte: 35, indianAnte: 25 } });
   await expect(page.locator('.queued-hand-rules')).toContainText('35 round ante');
@@ -426,7 +429,7 @@ test('Indian poker hides both live owner cards, shows the board and blinds, and 
     room.players[0]!.cards = ['As', 'Ks'];
     return room;
   });
-  await expect(page.locator('.street-label')).toHaveText('PREFLOP');
+  await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'preflop');
   await expect(page.getByRole('group', { name: 'Your Indian poker cards, intentionally hidden from you' })).toBeVisible();
   await expect(page.locator('.hero-seat .card-back')).toHaveCount(2);
   await expect(page.locator('.hero-seat .card-face')).toHaveCount(0);
@@ -442,7 +445,7 @@ test('Indian poker hides both live owner cards, shows the board and blinds, and 
   await expect(page.locator('.hero-seat .card-face')).toHaveCount(2);
   await expect(page.locator('.hero-seat .card-back')).toHaveCount(0);
   await expect(page.locator('.variant-guidance')).toContainText('your own cards are now revealed');
-  await expect(page.locator('.street-label')).toHaveText('PREFLOP');
+  await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'preflop');
   await page.reload();
   await expect(page.locator('.hero-seat .card-face')).toHaveCount(2);
   for (const width of [320, 390]) {
@@ -810,8 +813,9 @@ test('real two-player PLO uses the 500 minimum, pot caps and unanimous up-to run
     await expect(guest.locator('.bankroll-main > div > strong')).toContainText('500');
 
     await page.getByRole('button', { name: 'Choose next hand', exact: true }).click();
-    await page.getByLabel('PLO (four cards, pot limit)', { exact: true }).check();
-    await page.getByLabel('PLO round buy-in (ante per player)').fill('25');
+    await page.getByLabel('Omaha (four cards)', { exact: true }).check();
+    await page.getByLabel('Pot limit', { exact: true }).check();
+    await page.getByLabel('Omaha round buy-in (ante per player)').fill('25');
     await page.getByLabel('All-in runout consent').selectOption('3');
     await page.getByRole('button', { name: 'Save next-hand rules', exact: true }).click();
     await expect(page.locator('.queued-hand-rules')).toContainText('Pot-limit Omaha');
@@ -852,8 +856,8 @@ test('real two-player PLO uses the 500 minimum, pot caps and unanimous up-to run
     await expect(page.locator('.seat:not(.hero-seat) .card-back')).toHaveCount(4);
     await guest.getByRole('button', { name: 'Up to twice', exact: true }).click();
 
-    await expect(page.locator('.street-label')).toHaveText('HAND COMPLETE');
-    await expect(guest.locator('.street-label')).toHaveText('HAND COMPLETE');
+    await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'complete');
+    await expect(guest.locator('.table-stage')).toHaveAttribute('data-street', 'complete');
     const completed = await readRoom();
     expect(completed.hand!.runoutCount).toBe(2);
     expect(completed.hand!.runoutBoards).toHaveLength(2);

@@ -1,4 +1,4 @@
-import type { RoomView, Street } from '../shared/model';
+import { postflopCapRemaining, type RoomView, type Street } from '../shared/model';
 
 export interface Premove {
   action: 'check' | 'check_fold';
@@ -12,7 +12,7 @@ export function canPremove(room: RoomView): boolean {
   const hero = room.players.find(player => player.id === room.youId);
   return room.status === 'open' && !room.paused && !!room.hand && room.hand.street !== 'complete' &&
     room.hand.actorId !== null && !room.hand.runoutVote && !!hero?.hand && !hero.hand.folded &&
-    hero.stack > 0 && hero.seat !== null;
+    hero.stack > 0 && hero.seat !== null && postflopCapRemaining(room.hand, hero.hand) !== 0;
 }
 
 export function resolvePremove(premove: Premove, room: RoomView, connected: boolean): 'cancel' | 'wait' | 'check' | 'fold' {

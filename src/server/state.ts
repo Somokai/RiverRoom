@@ -1,13 +1,13 @@
 import { defaultHandRules, type HandHistory, type Room } from '../shared/model.js';
 
-export const ROOM_SCHEMA_VERSION = 4;
+export const ROOM_SCHEMA_VERSION = 5;
 
 // Legacy snapshots predate game variants. Their active hands must stay ordinary, single-run Hold'em.
 export function normalizeRoom(room: Room): Room {
   if (room.schemaVersion === ROOM_SCHEMA_VERSION) return room;
-  if (room.schemaVersion !== undefined && room.schemaVersion !== 1 && room.schemaVersion !== 2 && room.schemaVersion !== 3)
+  if (room.schemaVersion !== undefined && ![1, 2, 3, 4].includes(room.schemaVersion))
     throw new Error('This room uses an unsupported saved-state version.');
-  if (room.schemaVersion !== 2 && room.schemaVersion !== 3) {
+  if (room.schemaVersion === undefined || room.schemaVersion === 1) {
     room.nextHandRules = defaultHandRules(room.settings);
     for (const player of room.players) player.bountyNet = 0;
     const hand = room.hand;
@@ -27,14 +27,20 @@ export function normalizeRoom(room: Room): Room {
   room.nextHandRules.omahaAnte ??= defaultHandRules(room.settings).omahaAnte;
   // Zero records the absence of a variant-specific ante in already-dealt PLO hands.
   if (room.hand) room.hand.rules.omahaAnte ??= 0;
+  room.nextHandRules.postflopCap ??= 0;
+  if (room.hand) {
+    room.hand.rules.postflopCap ??= 0;
+    // Older active hands are uncapped; their prior post-flop contributions need no reconstruction.
+    for (const player of room.hand.players) player.postflopCommitted ??= 0;
+  }
   // Schema-three presets keep their absent modifiers: shared rule helpers resolve their original behavior.
   room.schemaVersion = ROOM_SCHEMA_VERSION;
   return room;
 }
 
 export function normalizeHistory(summary: HandHistory): HandHistory {
-  if (summary.rules !== undefined) return summary.rules.omahaAnte !== undefined ? summary
-    : { ...summary, rules: { ...summary.rules, omahaAnte: 0 } };
+  if (summary.rules !== undefined) return summary.rules.omahaAnte !== undefined && summary.rules.postflopCap !== undefined ? summary
+    : { ...summary, rules: { ...summary.rules, omahaAnte: summary.rules.omahaAnte ?? 0, postflopCap: summary.rules.postflopCap ?? 0 } };
   return {
     ...summary, rules: defaultHandRules(), boards: [[...summary.board]],
     runoutBoards: [[[...summary.board]]], runoutCount: 1, bounty: null,

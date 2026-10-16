@@ -14,6 +14,8 @@ export const handRulesSchema = z.object({
   doubleBoard: z.boolean().optional(),
   bombPot: z.boolean().optional(),
   indian: z.boolean().optional(),
+  potLimit: z.boolean().optional(),
+  postflopCap: z.number().int().min(0).max(10_000_000).optional(),
   bombAnte: amount,
   indianAnte: amount,
   omahaAnte: amount,

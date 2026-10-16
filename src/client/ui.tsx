@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
 import { X, Spade } from 'lucide-react';
-import { boardRuns, chips, handAnte, isBombPot, isDoubleBoard, isIndian, isOmaha, money, supportsSevenDeuce, type BountyAward, type Card, type Hand, type HandRules, type Player, type RoomView } from '../shared/model';
+import { boardRuns, chips, handAnte, isBombPot, isDoubleBoard, isIndian, isOmaha, isPotLimit, money, supportsSevenDeuce, type BountyAward, type Card, type Hand, type HandRules, type Player, type RoomView } from '../shared/model';
 import { findPlayerEmoji } from '../shared/emoji';
 import { boardCardKey } from './tableMotion';
 
@@ -83,7 +83,7 @@ export function ruleSummary(rules: HandRules, legacyIndian = false): string {
   const runs = rules.maxRunouts === 1 ? 'run once' : `consent for up to ${rules.maxRunouts} runs`;
   if (legacyIndian) return `${chips(rules.indianAnte)} ante · legacy one-card hand · one betting round`;
   const details = [
-    isOmaha(rules) ? 'pot limit' : 'No limit',
+    isPotLimit(rules) ? 'pot limit' : 'No limit',
     `${isOmaha(rules) ? 'four' : 'two'} ${isIndian(rules) ? 'face-out' : 'private'} cards`,
   ];
   if (isDoubleBoard(rules)) details.push('two boards');
@@ -91,6 +91,7 @@ export function ruleSummary(rules: HandRules, legacyIndian = false): string {
     details.push(`${chips(handAnte(rules, { ante: 0 }))} round ante`);
   if (isBombPot(rules)) details.push('no blinds or preflop betting');
   if (supportsSevenDeuce(rules)) details.push(rules.sevenDeuceBounty ? `${chips(rules.sevenDeuceBounty)} per opponent for 7/2` : '7/2 bounty off');
+  if (rules.postflopCap) details.push(`${chips(rules.postflopCap)} post-flop cap per player`);
   return [...details, runs].join(' · ');
 }
 

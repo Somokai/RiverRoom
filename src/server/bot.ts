@@ -85,7 +85,7 @@ export function chooseBotAction(
     strength = Math.max(...pairs);
   }
   const roll = draw();
-  const odds = legal.toCall / Math.max(1, hand.pot + legal.toCall);
+  const odds = legal.callAmount / Math.max(1, hand.pot + legal.callAmount);
   if (legal.canRaise && ((strength > 0.6 && roll < 0.38) || roll < 0.035)) {
     return { type: 'act', action: 'raise', amount: presetRaise(legal, player.hand?.streetBet ?? 0, view.settings.bigBlind,
       hand.street === 'preflop' ? { bb: 3 } : { pot: strength > 0.8 ? 0.75 : 0.5 }) };

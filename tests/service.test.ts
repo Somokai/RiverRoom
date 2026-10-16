@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { io as connectSocket, type Socket } from 'socket.io-client';
-import { DEFAULT_SETTINGS, type Identity, type RoomView } from '../src/shared/model';
+import { DEFAULT_SETTINGS, type Command, type Identity, type RoomView } from '../src/shared/model';
 import { openDatabase, type Database } from '../src/server/database';
 import { Store, canonical, digest } from '../src/server/store';
 import { csvCell, makeApp } from '../src/server/app';
@@ -62,6 +62,115 @@ beforeAll(async () => {
 afterAll(async () => { await server?.close(); await db?.close(); });
 
 describe('persistent multiplayer service', () => {
+  test('post-flop caps are versioned and retry-safe, preserve unused stacks, and allow capped runouts', async () => {
+    const host = await guest('Cap host');
+    const player = await guest('Cap guest');
+    let room = await create(host);
+    room = await enter(room, player);
+    const send = async (user: Guest, value: Command, key = randomUUID()) => {
+      const result = await command(room, user, value, key);
+      expect(result.response.status, result.text).toBe(200);
+      room = result.json.room as RoomView;
+      return result;
+    };
+    const actor = () => [host, player].find(user => user.user.id === room.hand!.actorId)!;
+    await send(player, { type: 'fund', amount: 10000 });
+    await send(host, { type: 'approve', requestId: room.requests.at(-1)!.id, approve: true });
+    await send(host, { type: 'next_hand', rules: {
+      ...room.nextHandRules, game: 'omaha', potLimit: false, postflopCap: 500,
+      bombPot: true, doubleBoard: true, indian: true, bombAnte: 25, maxRunouts: 3,
+    } });
+    await send(host, { type: 'deal' });
+    expect(room.hand).toMatchObject({ street: 'flop', rules: { potLimit: false, postflopCap: 500 } });
+    expect(room.hand!.players.map(member => member.postflopCommitted)).toEqual([0, 0]);
+    const beforeRaise = room;
+    const raiser = actor();
+    const key = randomUUID();
+    await send(raiser, { type: 'act', action: 'raise', amount: 200 }, key);
+    const raisedVersion = room.version;
+    const duplicate = await command(beforeRaise, raiser, { type: 'act', action: 'raise', amount: 200 }, key);
+    expect(duplicate.json.duplicate).toBe(true);
+    expect(duplicate.json.room.version).toBe(raisedVersion);
+    expect((await command(beforeRaise, actor(), { type: 'act', action: 'call' })).response.status).toBe(409);
+    expect((await command(room, actor(), { type: 'act', action: 'raise', amount: 600 })).response.status).toBe(400);
+    await send(actor(), { type: 'act', action: 'call' });
+    expect(room.hand!.street).toBe('turn');
+    expect(room.hand!.players.map(member => member.postflopCommitted)).toEqual([200, 200]);
+    await send(host, { type: 'next_hand', rules: { ...room.nextHandRules, postflopCap: 50, potLimit: true } });
+    expect(room.hand!.rules).toMatchObject({ postflopCap: 500, potLimit: false });
+    await send(actor(), { type: 'act', action: 'raise', amount: 300 });
+    await send(actor(), { type: 'act', action: 'call' });
+    expect(room.hand).toMatchObject({ actorId: null, deadline: null, runoutVote: { maxRuns: 3 } });
+    expect(room.players.map(member => member.stack)).toEqual([9475, 9475]);
+    expect(room.hand!.players.map(member => member.postflopCommitted)).toEqual([500, 500]);
+    for (const user of [host, player]) {
+      const view = await get(room.id, user);
+      expect(view.legal.canAct).toBe(false);
+      expect(view.players.find(member => member.id === user.user.id)!.cards).toEqual([null, null, null, null]);
+    }
+    await send(host, { type: 'pause', value: true });
+    expect(room.hand!.runoutVote!.deadline).toBeNull();
+    await send(host, { type: 'pause', value: false });
+    await send(host, { type: 'runouts', handId: room.hand!.id, count: 1 });
+    expect(room.hand).toMatchObject({ street: 'complete', awardedPot: 1050 });
+    expect(room.players.reduce((sum, member) => sum + member.stack, 0)).toBe(20000);
+    expect(room.players.every(member => member.stack >= 9475)).toBe(true);
+    expect((await store.hands(room.id)).entries[0]!.rules).toMatchObject({ postflopCap: 500, potLimit: false });
+    expect((await store.playerStats(host.user.id)).totals.hands).toBe(1);
+    expect((await store.verifyAudit(room.id)).valid).toBe(true);
+  });
+
+  test('post-flop commitments and the frozen cap survive a database reopen and restart pause', async () => {
+    const path = await mkdtemp(join(tmpdir(), 'river-room-cap-test-'));
+    let local: Database | null = null;
+    try {
+      local = await openDatabase({ directory: join(path, 'postgres') });
+      let persisted = new Store(local);
+      const person = await persisted.createIdentity('Persistent cap');
+      let room = await persisted.create(person.user, {
+        name: 'Cap persistence', settings: { ...DEFAULT_SETTINGS, ante: 20, autoDeal: false },
+        buyIn: 10000, commandId: randomUUID(),
+      });
+      const send = async (actor: string, value: Command) => {
+        room = (await persisted.execute(room.id, actor, randomUUID(), value, room.version)).room;
+      };
+      await send(person.user.id, { type: 'add_bot' });
+      const bot = room.players.find(member => member.bot)!.id;
+      await send(person.user.id, { type: 'next_hand', rules: { ...room.nextHandRules, potLimit: false, postflopCap: 500 } });
+      await send(person.user.id, { type: 'deal' });
+      await send(person.user.id, { type: 'act', action: 'call' });
+      await send(bot, { type: 'act', action: 'check' });
+      await send(bot, { type: 'act', action: 'raise', amount: 200 });
+      await send(person.user.id, { type: 'act', action: 'call' });
+      expect(room.hand!.street).toBe('turn');
+      expect(room.hand!.players.map(member => member.postflopCommitted)).toEqual([200, 200]);
+      const ledger = await persisted.ledger(room.id);
+      await local.close(); local = null;
+      local = await openDatabase({ directory: join(path, 'postgres') });
+      persisted = new Store(local);
+      await persisted.pauseAfterRestart();
+      room = await persisted.getRoom(room.id);
+      expect(room.paused).toBe(true);
+      expect(room.hand!.rules).toMatchObject({ postflopCap: 500, potLimit: false });
+      expect(room.hand!.players.map(member => member.postflopCommitted)).toEqual([200, 200]);
+      expect(await persisted.ledger(room.id)).toEqual(ledger);
+      await send(person.user.id, { type: 'pause', value: false });
+      await expect(persisted.execute(room.id, bot, randomUUID(), { type: 'act', action: 'raise', amount: 301 }, room.version))
+        .rejects.toThrow('not available');
+      await send(bot, { type: 'act', action: 'raise', amount: 300 });
+      await send(person.user.id, { type: 'act', action: 'call' });
+      expect(room.hand).toMatchObject({ street: 'complete', awardedPot: 1240 });
+      expect(room.hand!.players.map(member => member.postflopCommitted)).toEqual([500, 500]);
+      expect(room.players.every(member => member.stack >= 9380)).toBe(true);
+      await local.close(); local = null;
+      local = await openDatabase({ directory: join(path, 'postgres') });
+      persisted = new Store(local);
+      expect(await persisted.getRoom(room.id)).toEqual(room);
+      expect((await persisted.hands(room.id)).entries[0]!.rules).toMatchObject({ postflopCap: 500, potLimit: false });
+      expect((await persisted.verifyAudit(room.id)).valid).toBe(true);
+    } finally { await local?.close(); await rm(path, { recursive: true, force: true }); }
+  });
+
   test('voluntary reveals broadcast only selected cards, remain retry-safe, and update public history without accounting or stats changes', async () => {
     const host = await guest('Reveal owner');
     const player = await guest('Reveal opponent');

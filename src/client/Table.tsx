@@ -1,6 +1,6 @@
 import { memo, useEffect, useState, type CSSProperties } from 'react';
 import { Bot, Pause, Crown, WifiOff, Spade, MessageCircle, VolumeX } from 'lucide-react';
-import { chips, handGameLabel, isIndian, isLegacyIndianHand, isOmaha, rulesGameLabel, type RoomView } from '../shared/model';
+import { chips, handGameLabel, isIndian, isLegacyIndianHand, isOmaha, postflopCapRemaining, rulesGameLabel, type RoomView } from '../shared/model';
 import { EMOTES, type EmoteId, type TableEmote } from '../shared/emotes';
 import { ChipStack, CommunityBoards, PlayerName, PlayingCard, cardLabel } from './ui';
 import { useCountdown } from './clock';
@@ -62,28 +62,26 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
   });
   const winners = new Set(hand?.results.flatMap(result => result.winners));
   const winnerNames = room.players.filter(player => winners.has(player.id)).map(player => player.name).join(' & ');
-  const streetName = hand?.street === 'complete' ? 'HAND COMPLETE' : vote ? 'RUNOUT DECISION'
-    : legacyIndian ? 'LEGACY ONE-CARD BETTING' : hand?.street?.toUpperCase() ?? 'THE NIGHT IS YOUNG';
+  const winnerLabel = winnerNames ? `Hand won by ${winnerNames}` : 'Hand complete';
+  const streetName = hand?.street === 'complete' ? 'Hand complete' : vote ? 'Runout decision'
+    : legacyIndian ? 'Legacy one-card betting' : hand ? `${hand.street} betting` : 'Waiting for the first hand';
 
-  return <div ref={motion.surface} role="region" data-room-version={room.version} data-table-motion={animations ? 'on' : 'off'} className={`table-stage ${room.settings.maxSeats >= 8 ? 'table-crowded' : ''} ${doubleBoard ? 'table-double-board' : ''} ${indian ? 'table-indian' : ''} ${room.paused ? 'table-is-paused' : ''}`}
+  return <div ref={motion.surface} role="region" data-room-version={room.version} data-street={hand?.street ?? 'waiting'} data-table-motion={animations ? 'on' : 'off'} className={`table-stage ${room.settings.maxSeats >= 8 ? 'table-crowded' : ''} ${doubleBoard ? 'table-double-board' : ''} ${indian ? 'table-indian' : ''} ${room.paused ? 'table-is-paused' : ''}`}
+    aria-description={`${hand ? handGameLabel(hand) : rulesGameLabel(rules)}. ${streetName}.${room.paused ? ' Table paused.' : ''}`}
     style={{ '--compact-table-height': `${compactHero + 95}px`, '--compact-community-y': `${compactCommunity}px` } as CSSProperties} aria-label="Poker table">
-    <div className="table-shadow" /><div className="table-rail"><div className="table-felt"><span className="felt-wordmark">RIVER ROOM <Spade size={14} fill="currentColor" /></span>
-      <span className="felt-subtitle">{(hand ? handGameLabel(hand) : rulesGameLabel(rules)).toUpperCase()}</span></div></div>
+    <div className="table-shadow" /><div className="table-rail"><div className="table-felt" /></div>
     <div className="community">
-      <span className="street-label">{streetName}</span>
-      {hand ? <><div className="pot-display" data-motion-pot><span className="table-deck" data-motion-deck aria-hidden="true"><i /><i /><i /></span>
+      {hand ? <><div className="pot-display" data-motion-pot role="group"
+        aria-label={`${hand.street === 'complete' ? 'Pot awarded' : 'Collected pot'}: ${chips(motion.pot)} chips`}
+        aria-description={active ? `Total including street wagers: ${chips(hand.pot)} chips` : undefined}>
+        <span className="table-deck" data-motion-deck aria-hidden="true"><i /><i /><i /></span>
         <span className={`collected-chips ${motion.pot === 0 ? 'collected-chips-empty' : ''}`}><ChipStack small gold /></span>
-        <span><small>{hand.street === 'complete' ? 'POT AWARDED' : 'COLLECTED POT'}</small><strong>{chips(motion.pot)}</strong>
-          {active && <small className="pot-inclusive">Total with bets: {chips(hand.pot)}</small>}</span></div>
-        {legacyIndian ? <div className="indian-table-note"><strong>Saved one-card hand.</strong>
-          <span>Finishes under its original ante-only rules. New Indian deals use two cards and a Hold'em board.</span></div>
-          : <CommunityBoards hand={hand} motion onRunChange={motion.cancel} />}
-        {hand.street === 'complete' ? <div className="hand-outcome"><Crown size={14} /><span>{winnerNames || 'Hand complete'}
-          {hand.boards.length > 1 || hand.runoutCount > 1 ? <small>{hand.boards.length} {hand.boards.length === 1 ? 'board' : 'boards'} / {hand.runoutCount} {hand.runoutCount === 1 ? 'run' : 'runs'} — pot shares in Hand history</small>
-            : hand.results[0]?.description !== 'Uncontested' && <small>{hand.results[0]?.description}</small>}</span></div>
-          : <div className="pot-caption">{vote ? 'Betting is over. Public cards stay in place while players decide.' : `${hand.players.filter(player => !player.folded).length} players in the hand`}</div>}
-      </> : <div className="waiting-table"><Spade size={35} strokeWidth={1} /><h2>Pull up a chair.</h2><p>Invite your people or add practice bots.<br />The host deals when everyone is ready.</p></div>}
-      {room.paused && <span className="paused-overlay"><Pause size={14} /> TABLE PAUSED</span>}
+        <strong>{chips(motion.pot)}</strong></div>
+        {!legacyIndian && <CommunityBoards hand={hand} motion onRunChange={motion.cancel} />}
+        {hand.street === 'complete' && <div className="hand-outcome" role="img"
+          aria-label={winnerLabel} title={winnerLabel}><Crown size={14} aria-hidden="true" /></div>}
+      </> : <div className="waiting-table" role="img" aria-label="Waiting for the first hand"><Spade size={35} strokeWidth={1} aria-hidden="true" /></div>}
+      {room.paused && <span className="paused-overlay" role="img" aria-label="Table paused" title="Table paused"><Pause size={14} aria-hidden="true" /></span>}
     </div>
     {seats.map(({ seat, x, y, compactX, compactY }) => {
       const player = room.players.find(item => item.seat === seat);
@@ -131,7 +129,9 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
             {turn ? <TurnClock deadline={hand.deadline} timeOffset={timeOffset} paused={room.paused} turnSeconds={room.settings.turnSeconds} />
               : <span className="seat-action">{room.status === 'closed' ? 'Cashed out'
               : runoutEligible ? runoutChoice ? `Runout: ${runoutChoice === 1 ? 'once' : `up to ${runoutChoice}`}` : 'Runout: pending'
-                : folded ? 'Folded' : player.stack === 0 && player.hand && active ? 'ALL IN' : player.sittingOut ? 'Sitting out' : player.hand?.lastAction || (player.stack === 0 ? 'Awaiting buy-in' : player.bot ? 'Practice bot' : 'Ready')}</span>
+                : folded ? 'Folded' : player.stack === 0 && player.hand && active ? 'ALL IN'
+                  : active && player.hand && postflopCapRemaining(hand, player.hand) === 0 ? 'CAPPED'
+                    : player.sittingOut ? 'Sitting out' : player.hand?.lastAction || (player.stack === 0 ? 'Awaiting buy-in' : player.bot ? 'Practice bot' : 'Ready')}</span>
             }
           </div>
           <div className={`seat-bet ${wager === 0 ? 'wager-empty' : ''}`} data-motion-wager={player.id} data-wager-amount={wager}

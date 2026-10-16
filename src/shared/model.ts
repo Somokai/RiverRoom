@@ -4,7 +4,7 @@ export type FundingKind = 'buy_in' | 'rebuy' | 'add_on';
 export type GameVariant = 'holdem' | 'omaha' | 'omaha_bomb' | 'indian';
 export type RunoutCount = 1 | 2 | 3;
 export const GAME_LABELS: Record<GameVariant, string> = {
-  holdem: "Texas Hold'em", omaha: 'Pot-limit Omaha', omaha_bomb: 'Double-board PLO bomb pot', indian: 'Indian poker (two cards)',
+  holdem: "Texas Hold'em", omaha: 'Omaha', omaha_bomb: 'Double-board Omaha bomb pot', indian: 'Indian poker (two cards)',
 };
 
 export interface HandRules {
@@ -13,6 +13,8 @@ export interface HandRules {
   doubleBoard?: boolean;
   bombPot?: boolean;
   indian?: boolean;
+  potLimit?: boolean;
+  postflopCap?: number;
   bombAnte: number;
   indianAnte: number;
   omahaAnte: number;
@@ -20,11 +22,13 @@ export interface HandRules {
   maxRunouts: RunoutCount;
 }
 export const isOmaha = (rules: HandRules): boolean => rules.game === 'omaha' || rules.game === 'omaha_bomb';
+export const isPotLimit = (rules: HandRules): boolean => rules.potLimit ?? isOmaha(rules);
 export const isIndian = (rules: HandRules): boolean => rules.indian ?? rules.game === 'indian';
 export const isBombPot = (rules: HandRules): boolean => rules.bombPot ?? rules.game === 'omaha_bomb';
 export const isDoubleBoard = (rules: HandRules): boolean => rules.doubleBoard ?? rules.game === 'omaha_bomb';
 export const handModifiers = (rules: HandRules) => ({
   doubleBoard: isDoubleBoard(rules), bombPot: isBombPot(rules), indian: isIndian(rules),
+  potLimit: isPotLimit(rules), postflopCap: rules.postflopCap ?? 0,
 });
 export const supportsSevenDeuce = (rules: HandRules): boolean => !isOmaha(rules) && !isIndian(rules);
 // Keep existing statistics buckets; mixed Indian/PLO hands belong to the PLO bucket.
@@ -34,19 +38,20 @@ export function handGameVariant(rules: HandRules): GameVariant {
 }
 export function rulesGameLabel(rules: HandRules): string {
   const omaha = isOmaha(rules);
+  const potLimit = isPotLimit(rules);
   const indian = isIndian(rules);
   const bomb = isBombPot(rules);
   const double = isDoubleBoard(rules);
   if (!double && !bomb) return omaha
-    ? indian ? 'Indian pot-limit Omaha' : GAME_LABELS.omaha
-    : indian ? GAME_LABELS.indian : GAME_LABELS.holdem;
-  if (omaha && double && bomb && !indian) return GAME_LABELS.omaha_bomb;
-  return `${double ? 'Double-board ' : ''}${indian ? 'Indian ' : ''}${omaha ? 'pot-limit Omaha' : "Hold'em"}${bomb ? ' bomb pot' : ''}`;
+    ? indian ? `Indian ${potLimit ? 'pot-limit' : 'no-limit'} Omaha` : `${potLimit ? 'Pot-limit' : 'No-limit'} Omaha`
+    : indian ? `${potLimit ? 'Pot-limit ' : ''}${GAME_LABELS.indian}` : potLimit ? "Pot-limit Hold'em" : GAME_LABELS.holdem;
+  if (omaha && potLimit && double && bomb && !indian) return 'Double-board PLO bomb pot';
+  return `${double ? 'Double-board ' : ''}${indian ? 'Indian ' : ''}${omaha ? `${potLimit ? 'pot-limit' : 'no-limit'} Omaha` : `${potLimit ? 'pot-limit ' : ''}Hold'em`}${bomb ? ' bomb pot' : ''}`;
 }
 export function defaultHandRules(settings: Pick<RoomSettings, 'bigBlind'> = DEFAULT_SETTINGS): HandRules {
   return {
     game: 'holdem', bombAnte: Math.min(10_000_000, settings.bigBlind * 5),
-    indianAnte: settings.bigBlind, omahaAnte: settings.bigBlind, sevenDeuceBounty: 0, maxRunouts: 1,
+    indianAnte: settings.bigBlind, omahaAnte: settings.bigBlind, sevenDeuceBounty: 0, maxRunouts: 1, postflopCap: 0,
   };
 }
 export function handAnte(rules: HandRules, settings: Pick<RoomSettings, 'ante'>): number {
@@ -116,6 +121,8 @@ export interface HandPlayer {
   id: string;
   seat: number;
   committed: number;
+  // Net post-flop bets/calls only; forced contributions and preflop betting are excluded.
+  postflopCommitted: number;
   streetBet: number;
   folded: boolean;
   actedAtBet: number | null;
@@ -168,6 +175,19 @@ export interface Hand {
   revealed: Record<string, Card[]>;
   balanceAfter: Record<string, number>;
   bountyAfter: Record<string, number>;
+}
+
+export function postflopCapRemaining(
+  hand: Pick<Hand, 'rules' | 'street'> | null,
+  player: Pick<HandPlayer, 'postflopCommitted'> | null,
+): number | null {
+  const cap = hand?.rules.postflopCap ?? 0;
+  return !hand || !player || !cap || hand.street === 'preflop' || hand.street === 'complete'
+    ? null : Math.max(0, cap - player.postflopCommitted);
+}
+
+export function availableBettingChips(hand: Hand, player: HandPlayer, stack: number): number {
+  return Math.min(stack, postflopCapRemaining(hand, player) ?? stack);
 }
 
 export interface FundingRequest {
@@ -251,6 +271,7 @@ export interface LegalActions {
   callAmount: number;
   minRaiseTo: number;
   maxRaiseTo: number;
+  // The total street bet that exhausts either the stack or the remaining post-flop allowance.
   allInTo: number;
   canAllIn: boolean;
   bettingLimit: 'no_limit' | 'pot_limit';

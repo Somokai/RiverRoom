@@ -8,6 +8,7 @@ import {
 } from '../src/shared/model';
 import * as cardEngine from '../src/server/cards';
 import { openDatabase, type Database } from '../src/server/database';
+import { ROOM_SCHEMA_VERSION } from '../src/server/state';
 import { Store, verifyTransfers } from '../src/server/store';
 import { makeApp } from '../src/server/app';
 
@@ -624,7 +625,7 @@ describe('mixed-game HTTP commands against real, isolated in-memory PostgreSQL',
     await database.query('UPDATE rr_rooms SET state=$2::jsonb WHERE id=$1', [room.id, JSON.stringify(legacy)]);
     const restoredStore = new Store(database);
     const restored = await restoredStore.getRoom(room.id);
-    expect(restored.schemaVersion).toBe(4);
+    expect(restored.schemaVersion).toBe(ROOM_SCHEMA_VERSION);
     expect(restored.settings.minBuyIn).toBe(4000);
     expect(restored.hand).toMatchObject({
       rules: { game: 'holdem', maxRunouts: 1, sevenDeuceBounty: 0 },
@@ -638,12 +639,12 @@ describe('mixed-game HTTP commands against real, isolated in-memory PostgreSQL',
       const summary = (await restoredStore.rooms(who.user.id)).find(item => item.id === room.id)!;
       expect(summary).toMatchObject({ stack: 4900, buyIns: 5000, chipNet: 0, bountyNet: 0, net: 0 });
     }
-    expect((await restoredStore.openRooms()).find(item => item.id === room.id)!.schemaVersion).toBe(4);
+    expect((await restoredStore.openRooms()).find(item => item.id === room.id)!.schemaVersion).toBe(ROOM_SCHEMA_VERSION);
     room = await get(room.id, host);
     room = await accepted(room, host, { type: 'chat', message: 'Persist the upgraded snapshot without moving chips.' });
     expect(await allLedger(room.id)).toEqual(ledger);
     const saved = await database.query<{ state: Room }>('SELECT state FROM rr_rooms WHERE id=$1', [room.id]);
-    expect(saved.rows[0]!.state.schemaVersion).toBe(4);
+    expect(saved.rows[0]!.state.schemaVersion).toBe(ROOM_SCHEMA_VERSION);
     expect(saved.rows[0]!.state.hand!.rules.game).toBe('holdem');
     room = await checkDown(room, setup.people);
     expect(room.hand!.board.slice(0, 3)).toEqual(modern.hand!.board);

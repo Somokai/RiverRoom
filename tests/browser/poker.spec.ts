@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { test, expect, type Page, type BrowserContext } from '@playwright/test';
-import type { Identity, PlayerStats, RoomView } from '../../src/shared/model';
+import type { Command, Identity, PlayerStats, RoomView } from '../../src/shared/model';
 
 async function dismissRecovery(page: Page) {
   await expect(page.getByRole('heading', { name: 'Keep your seat. Save this key.' })).toBeVisible();
@@ -262,7 +262,7 @@ test('private advanced stats use real completed hands, stay personal, and work i
     await page.getByRole('button', { name: 'Deal first hand', exact: true }).click();
     await page.getByRole('button', { name: 'Raise to 300', exact: true }).click();
     await other.getByRole('button', { name: 'Fold', exact: true }).click();
-    await expect(page.locator('.street-label')).toHaveText('HAND COMPLETE');
+    await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'complete');
     await page.getByRole('button', { name: 'My stats', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'My advanced stats' });
     await expect(dialog.locator('.stats-privacy')).toContainText('Other players and table hosts cannot view');
@@ -383,7 +383,7 @@ test('two independent players can play, reconnect, rebuy, cash out, and reconcil
     await page.getByRole('button', { name: 'Raise to 300' }).click();
     await expect(guestPage.getByRole('button', { name: 'Call 200' })).toBeEnabled();
     await guestPage.getByRole('button', { name: 'Call 200' }).click();
-    await expect(page.locator('.street-label')).toHaveText('FLOP');
+    await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'flop');
 
     await guestContext.setOffline(true);
     await expect(guestPage.locator('.connection-banner')).toBeVisible();
@@ -391,14 +391,14 @@ test('two independent players can play, reconnect, rebuy, cash out, and reconcil
     await expect(guestPage.locator('.game-nav-center')).toHaveText('LIVE TABLE');
     await guestPage.reload();
     await expect(guestPage.getByRole('heading', { name: initial.name })).toBeVisible();
-    await expect(guestPage.locator('.street-label')).toHaveText('FLOP');
+    await expect(guestPage.locator('.table-stage')).toHaveAttribute('data-street', 'flop');
     for (let turns = 0; turns < 10; turns++) {
       const view = await getRoom(page, initial.id);
       if (view.hand?.street === 'complete') break;
       await checkAction(view.hand?.actorId === view.youId ? page : guestPage, initial.id);
     }
-    await expect(page.locator('.street-label')).toHaveText('HAND COMPLETE');
-    await expect(guestPage.locator('.street-label')).toHaveText('HAND COMPLETE');
+    await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'complete');
+    await expect(guestPage.locator('.table-stage')).toHaveAttribute('data-street', 'complete');
 
     await page.locator('.bankroll-actions').getByRole('button', { name: 'Add / rebuy' }).click();
     await page.getByLabel('Chips to add').fill('1000');
@@ -476,7 +476,7 @@ test('per-table emojis update live, survive reconnects, and can be searched, cha
     await page.getByRole('button', { name: `Approve ${guestName}` }).click();
     await expect(guestPage.locator('.bankroll-main strong').first()).toContainText('10,000');
     await page.getByRole('button', { name: 'Deal first hand' }).click();
-    await expect(guestPage.locator('.street-label')).toHaveText('PREFLOP');
+    await expect(guestPage.locator('.table-stage')).toHaveAttribute('data-street', 'preflop');
     const before = await getRoom(guestPage, initial.id);
     await guestPage.getByRole('button', { name: 'Choose table emoji', exact: true }).click();
     await picker.getByRole('searchbox').fill('streak');
@@ -515,7 +515,10 @@ test('per-table emojis update live, survive reconnects, and can be searched, cha
     await guestPage.route(`**/api/rooms/${initial.id}/commands`, route =>
       route.fulfill({ status: 409, json: { error: 'The table changed. Please choose your emoji again.' } }), { times: 1 });
     await picker.getByRole('button', { name: 'Choose Winking face', exact: true }).click();
-    await expect(picker.getByRole('alert')).toContainText('The table changed.');
+    await expect(picker).toHaveCount(0);
+    await expect(guestPage.getByRole('alert')).toContainText('The table changed.');
+    await expect(guestPage.locator('.hero-seat').getByRole('img', { name: 'Fire', exact: true })).toBeVisible();
+    await guestPage.getByRole('button', { name: 'Change your table emoji', exact: true }).click();
     await expect(picker.getByRole('button', { name: 'Choose Fire', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await picker.getByRole('button', { name: 'Choose Winking face', exact: true }).click();
     await expect(picker).toHaveCount(0);
@@ -560,6 +563,117 @@ test('expanded emoji catalog is searchable, categorized and selectable on deskto
   await page.getByRole('button', { name: 'Change your table emoji', exact: true }).click();
   await picker.getByRole('button', { name: 'Remove emoji', exact: true }).click();
   await expect(page.locator('.hero-seat .player-emoji')).toHaveCount(0);
+});
+
+test('emoji selection closes before saving finishes and failures preserve the server-approved choice', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const initial = await createTable(page, 'Emoji saving feedback', 2);
+  await serverCommand(page, initial.id, { type: 'emoji', emoji: '\u{1F60E}' });
+  await expect(page.locator('.hero-seat').getByRole('img', { name: 'Sunglasses', exact: true })).toBeVisible();
+  const trigger = page.getByRole('button', { name: 'Choose table emoji', exact: true });
+  const picker = page.getByRole('dialog', { name: 'Choose your table emoji', exact: true });
+  const requests: Array<{ commandId: string; expectedVersion: number; command: Command }> = [];
+  const path = `**/api/rooms/${initial.id}/commands`;
+  let savedEmoji: string | null = '\u{1F60E}';
+  let savedLabel = 'Sunglasses';
+  for (const choice of [
+    { label: 'Shark', search: 'shark', emoji: '\u{1F988}', fail: false },
+    { label: 'Crystal ball', search: 'fortune', emoji: '\u{1F52E}', fail: true },
+    { label: '', search: '', emoji: null, fail: false },
+  ]) {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    await page.route(path, async route => {
+      const body = route.request().postDataJSON() as typeof requests[number];
+      if (body.command.type !== 'emoji') { await route.continue(); return; }
+      requests.push(body);
+      await gate;
+      if (choice.fail) await route.fulfill({ status: 503, contentType: 'application/json',
+        body: JSON.stringify({ error: 'The emoji could not be saved. Please try again.' }) });
+      else await route.continue();
+    });
+    try {
+      const before = await getRoom(page, initial.id);
+      await trigger.click();
+      if (choice.search) await picker.getByRole('searchbox', { name: 'Search emojis' }).fill(choice.search);
+      await Promise.all([
+        page.waitForRequest(request => request.url().endsWith(`/rooms/${initial.id}/commands`) && request.method() === 'POST'),
+        picker.getByRole('button', { name: choice.emoji ? `Choose ${choice.label}` : 'Remove emoji', exact: true }).click(),
+      ]);
+      await expect(picker).toHaveCount(0, { timeout: 1000 });
+      await expect(page.locator('.toast')).toHaveText('Saving emoji...');
+      await expect(trigger).toBeDisabled();
+      await expect(trigger).toBeFocused();
+      expect((await getRoom(page, initial.id)).players.find(player => player.id === initial.youId)!.emoji).toBe(savedEmoji);
+      await expect(page.locator('.hero-seat').getByRole('img', { name: savedLabel, exact: true })).toBeVisible();
+      expect(requests.at(-1)).toMatchObject({ expectedVersion: before.version, command: { type: 'emoji', emoji: choice.emoji } });
+      release();
+      if (choice.fail) {
+        await expect(page.getByRole('alert')).toContainText('The emoji could not be saved');
+        await expect(page.locator('.toast')).toHaveCount(0);
+      } else {
+        savedEmoji = choice.emoji; savedLabel = choice.label;
+        await expect(page.locator('.toast')).toHaveText(choice.emoji ? 'Table emoji updated.' : 'Table emoji removed.');
+      }
+      await expect(trigger).toBeEnabled();
+      await expect(trigger).toBeFocused();
+      expect((await getRoom(page, initial.id)).players.find(player => player.id === initial.youId)!.emoji).toBe(savedEmoji);
+      if (savedEmoji) await expect(page.locator('.hero-seat').getByRole('img', { name: savedLabel, exact: true })).toBeVisible();
+      else await expect(page.locator('.hero-seat .player-emoji')).toHaveCount(0);
+    } finally { release(); await page.unroute(path); }
+  }
+  expect(requests).toHaveLength(3);
+  expect(new Set(requests.map(request => request.commandId)).size).toBe(3);
+  expect(errors).toEqual([]);
+});
+
+test('emoji search stays cached during live updates and offscreen choices keep their space and keyboard support', async ({ page }) => {
+  await page.addInitScript(() => {
+    const counters = { searchBuilds: 0 };
+    Object.defineProperty(window, 'emojiCounters', { value: counters });
+    const lower = String.prototype.toLowerCase;
+    String.prototype.toLowerCase = function () {
+      if (String(this).startsWith('Sunglasses cool shades ')) counters.searchBuilds++;
+      return lower.call(this);
+    };
+  });
+  const initial = await createTable(page, 'Cached emoji grid', 2);
+  const builds = () => page.evaluate(() => (window as typeof window & { emojiCounters: { searchBuilds: number } }).emojiCounters.searchBuilds);
+  await page.getByRole('button', { name: 'Choose table emoji', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Choose your table emoji', exact: true });
+  await expect(picker.locator('.emoji-choice')).toHaveCount(208);
+  expect(await builds()).toBe(1);
+  const search = picker.getByRole('searchbox', { name: 'Search emojis' });
+  await search.fill('shark');
+  await expect(picker.locator('.emoji-choice')).toHaveCount(1);
+  const grid = await picker.locator('.emoji-results').elementHandle();
+  const newer = await serverCommand(page, initial.id, { type: 'chat', message: 'The table is still live behind the picker.' });
+  await expect(page.locator('.table-stage')).toHaveAttribute('data-room-version', String(newer.version));
+  expect(await grid!.evaluate(element => element.isConnected)).toBe(true);
+  await expect(search).toHaveValue('shark');
+  expect(await builds()).toBe(1);
+  await search.fill('');
+  await expect(picker.locator('.emoji-choice')).toHaveCount(208);
+  const results = picker.locator('.emoji-results');
+  const height = await results.evaluate(element => element.scrollHeight);
+  const last = picker.locator('.emoji-choice').last();
+  const label = (await last.getAttribute('title'))!;
+  await expect(last.locator('span')).toHaveText('');
+  await last.scrollIntoViewIfNeeded();
+  await last.focus();
+  await expect(last).toBeFocused();
+  await expect(last.locator('span')).not.toHaveText('');
+  expect(await results.evaluate(element => element.scrollHeight)).toBe(height);
+  expect(await last.evaluate(element => element.getBoundingClientRect().height)).toBe(44);
+  const [request] = await Promise.all([
+    page.waitForRequest(request => request.url().endsWith(`/rooms/${initial.id}/commands`) && request.method() === 'POST'),
+    last.press('Enter'),
+  ]);
+  expect(request.postDataJSON().expectedVersion).toBe(newer.version);
+  await expect(picker).toHaveCount(0);
+  await expect(page.locator('.hero-seat').getByRole('img', { name: label, exact: true })).toBeVisible();
+  expect(await builds()).toBe(1);
 });
 
 test('emoji interactions avoid recurring formatting work and delayed hover feedback', async ({ page }, testInfo) => {
@@ -676,7 +790,7 @@ test('desktop and phone layouts expose real controls without horizontal overflow
       const actorPage = (await Promise.all(players.map(async other => ({ page: other, id: (await getIdentity(other)).id })))).find(other => other.id === room.hand?.actorId)!.page;
       await checkAction(actorPage, room.id);
     }
-    await expect(page.locator('.street-label')).toHaveText('FLOP');
+    await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'flop');
     // Let the three opponents check so the pictured controls are genuinely the hero's turn.
     for (let i = 0; i < 3; i++) {
       room = await getRoom(page, room.id);
@@ -689,6 +803,8 @@ test('desktop and phone layouts expose real controls without horizontal overflow
     await expect(page.getByRole('button', { name: 'Half pot', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'Half pot', exact: true }).click();
     await expect(page.locator('.hero-seat')).toHaveClass(/seat-active/);
+    await expect(page.locator('.community .board-label')).toHaveCount(0);
+    await expect(page.locator('.pot-display')).toHaveText('400');
     await page.getByRole('button', { name: 'Players', exact: true }).click();
     await page.screenshot({ path: resolve(folder, 'desktop.png'), fullPage: true, animations: 'disabled' });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
