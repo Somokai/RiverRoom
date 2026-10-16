@@ -127,8 +127,10 @@ the separate bounty accounts as well as the in-play stacks.
    accounting session. Your profile can participate in several separate rooms.
    The default minimum buy-in is **500 chips**. Existing tables keep their
    configured limits until the host changes the minimum in House rules.
-4. Use **1/2 pot, 3/4 pot, full pot**, **2x/2.5x/3x/4x BB**, an exact amount,
-   the slider, or all-in. Amounts mean **total raise-to for this street**.
+4. Use **1/2 pot, 3/4 pot, full pot**, an exact amount, the slider, or all-in.
+   **2x/2.5x/3x/4x BB** presets are available preflop only; from the flop onward
+   (including bomb-pot deals), only pot-size presets are shown.
+   Amounts mean **total raise-to for this street**.
    For example, at 50/100, 3x BB raises **to 300**, not by another 300.
 5. Request additional chips at any time. Approved requests enter play only
    between hands. A rebuy is a new buy-in when the stack is zero; an add-on

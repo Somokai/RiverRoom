@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { test, expect, type Page, type BrowserContext } from '@playwright/test';
-import type { Command, Identity, PlayerStats, RoomView } from '../../src/shared/model';
+import { defaultHandRules, type Command, type Identity, type PlayerStats, type RoomView } from '../../src/shared/model';
 
 async function dismissRecovery(page: Page) {
   await expect(page.getByRole('heading', { name: 'Keep your seat. Save this key.' })).toBeVisible();
@@ -764,6 +764,77 @@ test('emoji interactions avoid recurring formatting work and delayed hover feedb
   await page.keyboard.press('Escape');
   await expect(trigger).toBeFocused();
 });
+
+for (const width of [1440, 390]) {
+  test(`bet presets follow the authoritative street through reconnects and new deals at ${width}px`, async ({ page, browser }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const initial = await createTable(page, 'Street-aware bet presets', 2);
+    const context = await browser.newContext({ viewport: { width, height: 1000 } });
+    const guest = await context.newPage();
+    const errors: string[] = [];
+    for (const client of [page, guest]) client.on('pageerror', error => errors.push(error.message));
+    const controls = async (street: string) => {
+      for (const client of [page, guest]) {
+        await expect(client.locator('.table-stage')).toHaveAttribute('data-street', street);
+        const presets = client.getByRole('group', { name: 'Bet sizing presets', exact: true });
+        await expect(presets.getByRole('button')).toHaveCount(street === 'preflop' ? 7 : 3);
+        for (const name of ['Half pot', 'Three-quarter pot', 'Full pot'])
+          await expect(presets.getByRole('button', { name, exact: true })).toBeVisible();
+        for (const multiplier of [2, 2.5, 3, 4])
+          await expect(presets.getByRole('button', { name: `${multiplier} times big blind`, exact: true })).toHaveCount(street === 'preflop' ? 1 : 0);
+        await expect(presets.locator('.preset-divider')).toHaveCount(street === 'preflop' ? 1 : 0);
+        await expect(presets.locator('.preset-label').filter({ hasText: /^BB$/ })).toHaveCount(street === 'preflop' ? 1 : 0);
+        await expect(client.getByLabel('Raise-to amount', { exact: true })).toBeVisible();
+        await expect(client.getByLabel('Raise amount slider', { exact: true })).toBeVisible();
+        await expect(client.getByRole('button', { name: 'All in', exact: true })).toBeVisible();
+      }
+    };
+    try {
+      await guestJoin(guest, initial.code, 'Preset guest');
+      await buyIn(guest);
+      await page.getByRole('button', { name: 'Approve Preset guest', exact: true }).click();
+      await expect(guest.locator('.bankroll-main strong').first()).toContainText('10,000');
+      await page.getByRole('button', { name: 'Deal first hand', exact: true }).click();
+      await page.getByRole('button', { name: '2 times big blind', exact: true }).click();
+      await expect(page.getByLabel('Raise-to amount', { exact: true })).toHaveValue(String(initial.settings.bigBlind * 2));
+      for (const street of ['preflop', 'flop', 'turn', 'river']) {
+        if (street === 'flop') {
+          await guest.reload();
+          await expect(guest.locator('.game-nav-center')).toHaveText('LIVE TABLE');
+        }
+        await controls(street);
+        let room = await getRoom(page, initial.id);
+        const actor = room.hand!.actorId === initial.youId ? page : guest;
+        const view = await getRoom(actor, initial.id);
+        await actor.getByRole('button', { name: 'Half pot', exact: true }).click();
+        const amount = Number(await actor.getByLabel('Raise-to amount', { exact: true }).inputValue());
+        expect(amount).toBeGreaterThanOrEqual(Math.min(view.legal.minRaiseTo, view.legal.maxRaiseTo));
+        expect(amount).toBeLessThanOrEqual(view.legal.maxRaiseTo);
+        expect((await getRoom(actor, initial.id)).version).toBe(view.version);
+        for (let turns = 0; room.hand!.street === street; turns++) {
+          expect(turns).toBeLessThan(4);
+          await checkAction(room.hand!.actorId === initial.youId ? page : guest, initial.id);
+          room = await getRoom(page, initial.id);
+        }
+      }
+      await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'complete');
+      await page.getByRole('button', { name: 'Deal next hand', exact: true }).click();
+      await controls('preflop');
+      const next = await getRoom(page, initial.id);
+      await (next.hand!.actorId === initial.youId ? page : guest).getByRole('button', { name: 'Fold', exact: true }).click();
+      await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'complete');
+      await serverCommand(page, initial.id, {
+        type: 'next_hand', rules: { ...defaultHandRules(initial.settings), bombPot: true, doubleBoard: false, bombAnte: 25 },
+      });
+      await page.getByRole('button', { name: 'Deal next hand', exact: true }).click();
+      await controls('flop');
+      await expect(page.locator('.blind-badge')).toHaveCount(0);
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+}
 
 test('essential text stays readable and high contrast on desktop and phone', async ({ page }, testInfo) => {
   const room = await createTable(page, 'Readable poker', 4);

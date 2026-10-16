@@ -291,10 +291,10 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
                 {isDoubleBoard(hand.rules) && 'Each board awards its own share.'}
               </>}
             </p>}
-            <div className="bet-sizing"><div className="presets"><span className="preset-label">POT</span>{[0.5, 0.75, 1].map((fraction, index) => <button key={fraction} aria-label={['Half pot', 'Three-quarter pot', 'Full pot'][index]}
+            <div className="bet-sizing"><div className="presets" role="group" aria-label="Bet sizing presets"><span className="preset-label">POT</span>{[0.5, 0.75, 1].map((fraction, index) => <button key={fraction} aria-label={['Half pot', 'Three-quarter pot', 'Full pot'][index]}
               disabled={disable || !legal.canRaise} className="preset-button" onClick={() => setAmount(presetRaise(legal, hero.hand?.streetBet ?? 0, room.settings.bigBlind, { pot: fraction }))}>{['\u00bd', '\u00be', '1\u00d7'][index]}</button>)}
-              <span className="preset-divider" /><span className="preset-label">BB</span>{[2, 2.5, 3, 4].map(multiplier => <button key={multiplier} disabled={disable || !legal.canRaise} className={`preset-button ${amount === multiplier * room.settings.bigBlind ? 'preset-selected' : ''}`}
-                aria-label={`${multiplier} times big blind`} onClick={() => setAmount(presetRaise(legal, hero.hand?.streetBet ?? 0, room.settings.bigBlind, { bb: multiplier }))}>{multiplier}&times;</button>)}</div>
+              {hand.street === 'preflop' && <><span className="preset-divider" /><span className="preset-label">BB</span>{[2, 2.5, 3, 4].map(multiplier => <button key={multiplier} disabled={disable || !legal.canRaise} className={`preset-button ${amount === multiplier * room.settings.bigBlind ? 'preset-selected' : ''}`}
+                aria-label={`${multiplier} times big blind`} onClick={() => setAmount(presetRaise(legal, hero.hand?.streetBet ?? 0, room.settings.bigBlind, { bb: multiplier }))}>{multiplier}&times;</button>)}</>}</div>
               <label className="raise-input"><span>{hand.currentBet === 0 ? 'BET' : 'RAISE TO'}</span><input aria-label="Raise-to amount" aria-invalid={legal.canRaise && !validRaise} aria-describedby="betting-limits"
                 type="number" inputMode="numeric" min={minRaise} max={legal.maxRaiseTo} step={1} value={Number.isFinite(amount) ? amount : ''} disabled={disable || !legal.canRaise} onChange={event => setAmount(event.target.value === '' ? Number.NaN : Number(event.target.value))} /></label></div>
             <input className="bet-slider" aria-label="Raise amount slider" type="range" min={minRaise || 0} max={Math.max(minRaise, legal.maxRaiseTo)} value={usableAmount || 0} step={1} disabled={disable || !legal.canRaise} onChange={event => setAmount(Number(event.target.value))} />
@@ -304,7 +304,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
               <button className="button button-allin" disabled={disable || !legal.canAct || !legal.canAllIn}
                 aria-describedby="betting-limits" onClick={() => legal.allInTo <= (hero.hand?.streetBet ?? 0) + legal.callAmount ? doAct('call') : doAct('raise', legal.allInTo)}>{cappedAllIn ? 'Bet cap' : 'All in'}</button></div>
             <p className="sizing-note" id="betting-limits">{legal.canRaise && !validRaise && <span className="negative">Enter a whole-chip total from {chips(minRaise)} to {chips(legal.maxRaiseTo)}. </span>}
-              Amounts are total bets for this street. Pot presets include the call; BB presets and sliders respect the server's legal limits.
+              Amounts are total bets for this street. Pot presets include the call{hand.street === 'preflop' && '; BB presets are available before the flop'}. All sizing controls respect the server's legal limits.
               {legal.bettingLimit === 'pot_limit' && <span className="limit-explanation">Pot-limit raise-to cap: <b>{chips(legal.maxRaiseTo)}</b> (pot cap {chips(legal.potLimitTo ?? legal.maxRaiseTo)}, including the call).
                 {legal.canAct && !legal.canAllIn && legal.allInTo > legal.maxRaiseTo && <> Your {cappedAllIn ? 'cap-limited' : 'full-stack'} total is {chips(legal.allInTo)}; {cappedAllIn ? 'Bet cap' : 'All in'} is unavailable above the pot limit.</>}
                 {hand.street === 'preflop' && ' Short preflop blinds count as nominal full blinds when calculating the pot limit.'}</span>}
