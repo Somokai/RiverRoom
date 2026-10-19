@@ -1,11 +1,11 @@
-import { defaultHandRules, type HandHistory, type Room } from '../shared/model.js';
+import { DEFAULT_SETTINGS, defaultHandRules, turnClockSettings, type HandHistory, type Room } from '../shared/model.js';
 
-export const ROOM_SCHEMA_VERSION = 5;
+export const ROOM_SCHEMA_VERSION = 6;
 
 // Legacy snapshots predate game variants. Their active hands must stay ordinary, single-run Hold'em.
 export function normalizeRoom(room: Room): Room {
   if (room.schemaVersion === ROOM_SCHEMA_VERSION) return room;
-  if (room.schemaVersion !== undefined && ![1, 2, 3, 4].includes(room.schemaVersion))
+  if (room.schemaVersion !== undefined && ![1, 2, 3, 4, 5].includes(room.schemaVersion))
     throw new Error('This room uses an unsupported saved-state version.');
   if (room.schemaVersion === undefined || room.schemaVersion === 1) {
     room.nextHandRules = defaultHandRules(room.settings);
@@ -32,6 +32,16 @@ export function normalizeRoom(room: Room): Room {
     room.hand.rules.postflopCap ??= 0;
     // Older active hands are uncapped; their prior post-flop contributions need no reconstruction.
     for (const player of room.hand.players) player.postflopCommitted ??= 0;
+  }
+  room.settings.timeBankSeconds ??= DEFAULT_SETTINGS.timeBankSeconds;
+  room.settings.timeBankEveryHands ??= DEFAULT_SETTINGS.timeBankEveryHands;
+  for (const player of room.players) {
+    player.timeBankMs ??= 0;
+    player.timeBankHandsPlayed ??= 0;
+  }
+  if (room.hand) {
+    room.hand.clock ??= turnClockSettings(room.settings);
+    room.hand.baseDeadline ??= room.hand.deadline;
   }
   // Schema-three presets keep their absent modifiers: shared rule helpers resolve their original behavior.
   room.schemaVersion = ROOM_SCHEMA_VERSION;

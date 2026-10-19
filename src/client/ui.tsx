@@ -75,6 +75,18 @@ export function Numeric({ label, value, onChange, min = 0, max = 10_000_000, ste
     {hint && <small id={`${id}-hint`}>{hint}</small>}</label>;
 }
 
+export function TimeBankFields({ seconds, everyHands, changeSeconds, changeEveryHands }: {
+  seconds: number; everyHands: number; changeSeconds: (value: number) => void; changeEveryHands: (value: number) => void;
+}) {
+  return <><div className="field-grid">
+    <Numeric label="Time bank added (seconds)" value={seconds} min={0} max={3600} onChange={changeSeconds}
+      hint="0 stops new awards. Existing banked time stays available." />
+    <Numeric label="Add time bank every (hands)" value={everyHands} min={1} max={1000} onChange={changeEveryHands}
+      hint="Counts completed hands you play, including folds. Sitting out does not count." />
+  </div><p className="form-note">Players start with an empty bank. These awards accumulate without a cap and are used automatically after the normal turn clock expires.
+    {' '}Unused turn-clock seconds are discarded, never banked. Unspent time-bank seconds carry forward.</p></>;
+}
+
 export const signedChips = (value: number) => `${value >= 0 ? '+' : ''}${chips(value)}`;
 export const bountyLabel = (value: number) => value > 0 ? 'Bounty receivable' : value < 0 ? 'Bounty owed' : 'Bounty balance';
 export const runLabel = (count: number) => count === 1 ? 'Run once' : count === 2 ? 'Up to twice' : 'Up to three times';

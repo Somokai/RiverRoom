@@ -126,7 +126,7 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
               title="Emotes (or right-click your name)" onClick={event => openEmotes(event.currentTarget)}><MessageCircle size={12} /></button>}
           </div>
             <strong className="seat-stack" data-motion-stack={player.id}>{chips(player.stack)}</strong>
-            {turn ? <TurnClock deadline={hand.deadline} timeOffset={timeOffset} paused={room.paused} turnSeconds={room.settings.turnSeconds} />
+            {turn ? <TurnClock deadline={hand.deadline} baseDeadline={hand.baseDeadline} timeOffset={timeOffset} paused={room.paused} turnSeconds={hand.clock.turnSeconds} />
               : <span className="seat-action">{room.status === 'closed' ? 'Cashed out'
               : runoutEligible ? runoutChoice ? `Runout: ${runoutChoice === 1 ? 'once' : `up to ${runoutChoice}`}` : 'Runout: pending'
                 : folded ? 'Folded' : player.stack === 0 && player.hand && active ? 'ALL IN'
@@ -165,10 +165,16 @@ export const PokerTable = memo(function PokerTable({ room, timeOffset, onChooseE
   </div>;
 });
 
-function TurnClock({ deadline, timeOffset, paused, turnSeconds }: {
-  deadline: number | null; timeOffset: number; paused: boolean; turnSeconds: number;
+function TurnClock({ deadline, baseDeadline, timeOffset, paused, turnSeconds }: {
+  deadline: number | null; baseDeadline: number | null; timeOffset: number; paused: boolean; turnSeconds: number;
 }) {
-  const remaining = useCountdown(paused ? null : deadline, timeOffset) ?? 0;
-  return <><span className="seat-action acting-label">{paused ? 'Turn paused' : `${remaining}s to act`}</span>
-    <span className="turn-progress" style={{ width: `${Math.min(100, remaining / turnSeconds * 100)}%` }} /></>;
+  const normal = useCountdown(paused ? null : baseDeadline, timeOffset) ?? 0;
+  const total = useCountdown(paused ? null : deadline, timeOffset) ?? 0;
+  const usingBank = !paused && normal === 0 && deadline !== null && baseDeadline !== null && deadline > baseDeadline;
+  const remaining = usingBank ? total : normal;
+  const duration = usingBank ? (deadline - baseDeadline) / 1000 : turnSeconds;
+  return <><span className={`seat-action acting-label ${usingBank ? 'time-bank-active' : ''}`} role="timer" aria-live="off"
+    aria-label={paused ? 'Turn paused' : `${usingBank ? 'Time bank' : 'Turn clock'}: ${remaining} seconds remaining`}>
+    {paused ? 'Turn paused' : usingBank ? `Bank: ${remaining}s` : `${remaining}s to act`}</span>
+    <span className={`turn-progress ${usingBank ? 'time-bank-progress' : ''}`} style={{ width: `${Math.min(100, remaining / duration * 100)}%` }} /></>;
 }

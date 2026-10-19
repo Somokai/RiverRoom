@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { io, type Socket } from 'socket.io-client';
 import { ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Bot, Check, CheckCheck, ChevronDown, Copy, Crown, Download, HandCoins, History, LoaderCircle, LockKeyhole, LogOut, MessageSquare, Pause, Play, Plus, ReceiptText, Send, Settings2, ShieldCheck, Smile, Users, Volume2, VolumeX, Wifi, WifiOff, X } from 'lucide-react';
 import { api, ApiError, getRoom, submit } from './api';
-import { BountyNotice, Brand, Modal, Numeric, PlayerName, bountyLabel, ruleSummary, runLabel, signedChips } from './ui';
+import { BountyNotice, Brand, Modal, Numeric, PlayerName, TimeBankFields, bountyLabel, ruleSummary, runLabel, signedChips } from './ui';
 import { PokerTable } from './Table';
 import { Records } from './Records';
 import { PlayerStatsDialog } from './PlayerStats';
@@ -368,6 +368,9 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
           {panel === 'players' ? <div className="player-list">{room.players.map(player => <div className={`player-row ${player.id === user.id ? 'player-row-you' : ''}`} key={player.id}>
             <span className="avatar list-avatar">{player.bot ? <Bot size={16} /> : player.name.slice(0, 1).toUpperCase()}</span>
             <div className="player-details"><strong><PlayerName player={player} />{player.id === room.hostId && <Crown size={11} />}{player.id === user.id && <small>YOU</small>}</strong><span><i className={`connection-dot ${player.connected ? '' : 'disconnected'}`} />{player.bot ? 'Virtual bot' : player.seat === null ? 'Cashed out' : player.sittingOut ? 'Sitting out' : player.connected ? 'Connected' : 'Away'}</span>
+              {(room.settings.timeBankSeconds > 0 || (hand?.clock.timeBankSeconds ?? 0) > 0 || player.timeBankMs > 0) &&
+                <PlayerTimeBank name={player.name} balanceMs={player.timeBankMs} timeOffset={timeOffset}
+                  deadline={!room.paused && hand?.actorId === player.id ? hand.deadline : null} />}
               {isHost && player.bot && player.seat !== null && open && <button className="text-button bot-refill" aria-label={`Refill ${player.name} with virtual chips`}
                 disabled={disable || activeHand || player.stack >= room.settings.maxBuyIn || (player.stack === 0 && player.buyIns > 0 && !room.settings.allowRebuys) ||
                   room.requests.some(request => request.playerId === player.id && ['pending', 'approved'].includes(request.status))}
@@ -438,15 +441,18 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
       {modal === 'settings' && <form onSubmit={(event: FormEvent) => { event.preventDefault(); void command({
         type: 'settings', smallBlind: draftSettings.smallBlind, bigBlind: draftSettings.bigBlind, ante: draftSettings.ante,
         autoDeal: draftSettings.autoDeal, turnSeconds: draftSettings.turnSeconds, allowRebuys: draftSettings.allowRebuys,
-        minBuyIn: draftSettings.minBuyIn,
-      }).then(ok => { if (ok) { setModal(null); setNotice(activeHand ? 'Blind changes take effect next hand.' : 'House rules updated.'); } }); }}>
-        <p className="form-note">Blinds and regular antes change between hands. Change game variants in the Next hand panel. Currency, chip value, seat count, and maximum funded stack stay fixed.</p>
+        minBuyIn: draftSettings.minBuyIn, timeBankSeconds: draftSettings.timeBankSeconds, timeBankEveryHands: draftSettings.timeBankEveryHands,
+      }).then(ok => { if (ok) { setModal(null); setNotice(activeHand ? 'Blind and clock changes take effect next hand.' : 'House rules updated.'); } }); }}>
+        <p className="form-note">Blinds, regular antes, and clock settings change from the next hand. Change game variants in the Next hand panel. Currency, chip value, seat count, and maximum funded stack stay fixed.</p>
         <div className="field-grid"><Numeric label="Small blind" value={draftSettings.smallBlind} min={1} onChange={value => setDraftSettings({ ...draftSettings, smallBlind: value })} />
           <Numeric label="Big blind" value={draftSettings.bigBlind} min={2} onChange={value => setDraftSettings({ ...draftSettings, bigBlind: value })} />
           <Numeric label="Ante" value={draftSettings.ante} max={draftSettings.bigBlind} onChange={value => setDraftSettings({ ...draftSettings, ante: value })} />
           <Numeric label="Turn clock (seconds)" value={draftSettings.turnSeconds} min={15} max={120} onChange={value => setDraftSettings({ ...draftSettings, turnSeconds: value })} />
           <Numeric label="Minimum buy-in" value={draftSettings.minBuyIn} min={1} max={room.settings.maxBuyIn} onChange={value => setDraftSettings({ ...draftSettings, minBuyIn: value })}
             hint={`1–${chips(room.settings.maxBuyIn)} chips. Existing stacks, funding and cash-outs do not change.`} /></div>
+        <TimeBankFields seconds={draftSettings.timeBankSeconds} everyHands={draftSettings.timeBankEveryHands}
+          changeSeconds={value => setDraftSettings({ ...draftSettings, timeBankSeconds: value })}
+          changeEveryHands={value => setDraftSettings({ ...draftSettings, timeBankEveryHands: value })} />
         <label className="checkbox"><input type="checkbox" checked={draftSettings.autoDeal} onChange={event => setDraftSettings({ ...draftSettings, autoDeal: event.target.checked })} /> Deal the next hand automatically</label>
         <label className="checkbox"><input type="checkbox" checked={draftSettings.allowRebuys} onChange={event => setDraftSettings({ ...draftSettings, allowRebuys: event.target.checked })} /> Allow rebuys after a player busts</label>
         <button className="button button-gold full-width" disabled={disable || !Number.isSafeInteger(draftSettings.minBuyIn) || draftSettings.minBuyIn < 1 || draftSettings.minBuyIn > room.settings.maxBuyIn}>Save house rules <Check size={17} /></button>
@@ -458,6 +464,15 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
 
 function NextDealClock({ deadline, timeOffset }: { deadline: number; timeOffset: number }) {
   return <>Next hand in {useCountdown(deadline, timeOffset) ?? 0}s</>;
+}
+
+function PlayerTimeBank({ name, balanceMs, deadline, timeOffset }: {
+  name: string; balanceMs: number; deadline: number | null; timeOffset: number;
+}) {
+  const remaining = useCountdown(deadline, timeOffset);
+  const seconds = Math.min(Math.ceil(balanceMs / 1000), remaining ?? Infinity);
+  return <span role="timer" aria-live="off" aria-label={`${name}'s time bank: ${seconds} seconds`}>
+    Time bank: {seconds}s</span>;
 }
 
 function RunoutDecision({ room, hand, timeOffset, disabled, error, choose }: {

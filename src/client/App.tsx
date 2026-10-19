@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, BarChart3, Plus, Users, ShieldCheck, ReceiptText, ArrowUpRight, LogOut, KeyRound, LoaderCircle, Check, Copy, X } from 'lucide-react';
 import { api, ApiError, getRoom, repeatable, useIdentity } from './api';
-import { Brand, ChipStack, Modal, Numeric, PlayingCard, bountyLabel, signedChips } from './ui';
+import { Brand, ChipStack, Modal, Numeric, PlayingCard, TimeBankFields, bountyLabel, signedChips } from './ui';
 import { Game } from './Game';
 import { PlayerStatsDialog } from './PlayerStats';
 import { DEFAULT_SETTINGS, chips, money, type Identity, type RoomSettings, type RoomSummary, type RoomView } from '../shared/model';
@@ -177,6 +177,9 @@ export function App() {
               <Numeric label="Seats" value={settings.maxSeats} min={2} max={9} onChange={value => setSettings({ ...settings, maxSeats: value })} />
               <Numeric label="Turn clock (seconds)" value={settings.turnSeconds} min={15} max={120} onChange={value => setSettings({ ...settings, turnSeconds: value })} />
               <label className="field"><span>Bookkeeping currency</span><select value={settings.currency} onChange={event => setSettings({ ...settings, currency: event.target.value as RoomSettings['currency'] })}>{['USD', 'EUR', 'GBP', 'CAD'].map(currency => <option key={currency}>{currency}</option>)}</select></label></div>
+              <TimeBankFields seconds={settings.timeBankSeconds} everyHands={settings.timeBankEveryHands}
+                changeSeconds={value => setSettings({ ...settings, timeBankSeconds: value })}
+                changeEveryHands={value => setSettings({ ...settings, timeBankEveryHands: value })} />
               <label className="checkbox"><input type="checkbox" checked={settings.autoDeal} onChange={event => setSettings({ ...settings, autoDeal: event.target.checked })} /> Automatically deal the next hand</label>
               <label className="checkbox"><input type="checkbox" checked={settings.allowRebuys} onChange={event => setSettings({ ...settings, allowRebuys: event.target.checked })} /> Allow rebuys</label></div>}
             <div className="form-actions"><button className="button button-gold full-width" disabled={busy}>{busy ? <LoaderCircle size={17} className="spin" /> : <Plus size={17} />} Create private table</button>

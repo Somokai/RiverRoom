@@ -64,6 +64,7 @@
 .seat-active .seat-panel { border-color: #cbb57a; box-shadow: 0 0 0 2px #d0b97a16, 0 5px 20px #0005; }
 .seat-active .seat-avatar { border-color: #beaa70; }.seat-winner .seat-panel { border-color: #81c8a0; }
 .acting-label { color: #e7cf93; }.turn-progress { position: absolute; left: 0; bottom: 0; height: 2px; background: #d4bb7d; transition: width .5s linear; }
+.seat-action.time-bank-active { color: #a9dcfa; }.turn-progress.time-bank-progress { background: #8ccbf0; }
 .position-badge { position: absolute; width: 18px; height: 18px; border-radius: 50%; font-size: 6px; display: flex; justify-content: center; align-items: center; box-shadow: 0 2px 4px #0005; }
 .dealer-badge { right: 6px; top: 12px; background: #eae4ca; color: #26372c; font-weight: 800; font-size: 9px; border: 2px solid #fff7dc; }
 .blind-badge { left: 7px; top: 15px; background: #25382c; color: #b1cfae; border: 1px solid #8aaa8070; }

@@ -9,6 +9,8 @@ export const emoteSchema = z.object({
   emote: z.enum(Object.keys(EMOTES) as [EmoteId, ...EmoteId[]]),
 }).strict();
 const amount = z.number().int().min(1).max(10_000_000);
+const timeBankSeconds = z.number().int().min(0).max(3600);
+const timeBankEveryHands = z.number().int().min(1).max(1000);
 export const handRulesSchema = z.object({
   game: z.enum(['holdem', 'omaha', 'omaha_bomb', 'indian']),
   doubleBoard: z.boolean().optional(),
@@ -32,6 +34,8 @@ export const settingsSchema = z.object({
   currency: z.enum(['USD', 'EUR', 'GBP', 'CAD']).default('USD'),
   maxSeats: z.number().int().min(2).max(9).default(9),
   turnSeconds: z.number().int().min(15).max(120).default(45),
+  timeBankSeconds: timeBankSeconds.default(DEFAULT_SETTINGS.timeBankSeconds),
+  timeBankEveryHands: timeBankEveryHands.default(DEFAULT_SETTINGS.timeBankEveryHands),
   autoDeal: z.boolean().default(true),
   allowRebuys: z.boolean().default(true),
 });
@@ -46,7 +50,8 @@ export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('cash_out') }),
   z.object({ type: z.literal('sit_out'), value: z.boolean() }),
   z.object({ type: z.literal('pause'), value: z.boolean() }),
-  z.object({ type: z.literal('settings'), smallBlind: amount, bigBlind: amount, ante: z.number().int().min(0).max(10_000_000), autoDeal: z.boolean(), turnSeconds: z.number().int().min(15).max(120), allowRebuys: z.boolean(), minBuyIn: amount.optional() }),
+  z.object({ type: z.literal('settings'), smallBlind: amount, bigBlind: amount, ante: z.number().int().min(0).max(10_000_000), autoDeal: z.boolean(), turnSeconds: z.number().int().min(15).max(120), allowRebuys: z.boolean(), minBuyIn: amount.optional(),
+    timeBankSeconds: timeBankSeconds.optional(), timeBankEveryHands: timeBankEveryHands.optional() }),
   z.object({ type: z.literal('next_hand'), rules: handRulesSchema }),
   z.object({ type: z.literal('runouts'), handId: z.string().uuid(), count: z.union([z.literal(1), z.literal(2), z.literal(3)]) }),
   z.object({ type: z.literal('add_bot'), name: displayName.optional() }),

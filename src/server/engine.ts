@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type {
   Card, ChipTransfer, Command, FundingRequest, GameEvent, Hand, HandPlayer, HandRules,
-  LegalActions, Player, Room, RoomSettings, RoomView, RunoutCount,
+  LegalActions, Player, Room, RoomSettings, RoomView, RunoutCount, TurnClockSettings,
 } from '../shared/model.js';
-import { availableBettingChips, defaultHandRules, handAnte, isBombPot, isDoubleBoard, isIndian, isLegacyIndianHand, isOmaha, isPotLimit, postflopCapRemaining, rulesGameLabel, supportsSevenDeuce } from '../shared/model.js';
+import { availableBettingChips, defaultHandRules, handAnte, isBombPot, isDoubleBoard, isIndian, isLegacyIndianHand, isOmaha, isPotLimit, postflopCapRemaining, rulesGameLabel, supportsSevenDeuce, turnClockSettings } from '../shared/model.js';
 import { evaluate, evaluateIndian, evaluateOmaha, shuffleDeck, type HandRank } from './cards.js';
 import { normalizeRoom, ROOM_SCHEMA_VERSION } from './state.js';
 import { isPlayerEmoji } from '../shared/emoji.js';
@@ -43,7 +43,7 @@ function join(room: Room, actorId: string, name: string, fx: Effects, ctx: Conte
   const seat = Array.from({ length: room.settings.maxSeats }, (_, i) => i).find(i => !room.players.some(player => player.seat === i));
   if (seat === undefined) throw new GameError('This table is full.', 409);
   if (existing) { existing.seat = seat; existing.sittingOut = false; }
-  else room.players.push({ id: actorId, name: name.trim(), emoji: null, seat, stack: 0, buyIns: 0, cashOuts: 0, rebuyCount: 0, addOnCount: 0, bountyNet: 0, sittingOut: false, timeoutCount: 0, bot: false, joinedAt: ctx.now });
+  else room.players.push({ id: actorId, name: name.trim(), emoji: null, seat, stack: 0, buyIns: 0, cashOuts: 0, rebuyCount: 0, addOnCount: 0, bountyNet: 0, sittingOut: false, timeoutCount: 0, timeBankMs: 0, timeBankHandsPlayed: 0, bot: false, joinedAt: ctx.now });
   event(fx, ctx, 'join', `${name.trim()} joined seat ${seat + 1}.`, actorId);
 }
 function nextSeat(players: Array<{ seat: number }>, after: number): number {
@@ -59,12 +59,52 @@ function takeCard(hand: Hand): Card {
 }
 
 export function validateSettings(settings: RoomSettings) {
+  validateClockSettings(settings);
   if (!integer(settings.smallBlind) || !integer(settings.bigBlind) || settings.smallBlind >= settings.bigBlind ||
       !integer(settings.ante, 0) || settings.ante > settings.bigBlind ||
       !integer(settings.minBuyIn) || !integer(settings.maxBuyIn) || settings.minBuyIn > settings.maxBuyIn ||
       settings.maxBuyIn < settings.bigBlind || !integer(settings.chipValueCents, 1, 10000) ||
       !integer(settings.maxSeats, 2, 9) || !integer(settings.turnSeconds, 15, 120)) {
     throw new GameError('Check your blinds, buy-in limits, seats, and turn clock.');
+  }
+}
+
+function validateClockSettings(settings: TurnClockSettings) {
+  if (!settings || !integer(settings.turnSeconds, 15, 120) ||
+      !integer(settings.timeBankSeconds, 0, 3600) || !integer(settings.timeBankEveryHands, 1, 1000))
+    throw new GameError('Choose a turn clock of 15-120 seconds and a time bank adding 0-3600 seconds every 1-1000 hands.');
+}
+
+function remainingTimeBankMs(room: Room, player: Player, now: number): number {
+  const hand = room.hand;
+  return !room.paused && hand?.actorId === player.id && hand.deadline !== null
+    ? Math.min(player.timeBankMs, Math.max(0, hand.deadline - now)) : player.timeBankMs;
+}
+
+function consumeTimeBank(room: Room, now: number) {
+  if (!room.hand?.actorId) return;
+  const player = findPlayer(room, room.hand.actorId);
+  player.timeBankMs = remainingTimeBankMs(room, player, now);
+}
+
+function startTurnClock(room: Room, now: number) {
+  const hand = room.hand!;
+  hand.turnStartedAt = now;
+  hand.baseDeadline = room.paused || !hand.actorId ? null : now + hand.clock.turnSeconds * 1000;
+  hand.deadline = hand.baseDeadline === null ? null : hand.baseDeadline + findPlayer(room, hand.actorId!).timeBankMs;
+}
+
+function accrueTimeBanks(room: Room, fx: Effects, ctx: Context) {
+  const hand = room.hand!;
+  if (hand.clock.timeBankSeconds === 0) return;
+  for (const participant of hand.players) {
+    const player = findPlayer(room, participant.id);
+    player.timeBankHandsPlayed++;
+    if (player.timeBankHandsPlayed >= hand.clock.timeBankEveryHands) {
+      player.timeBankHandsPlayed = 0;
+      player.timeBankMs += hand.clock.timeBankSeconds * 1000;
+      event(fx, ctx, 'time_bank', `${player.name} received ${hand.clock.timeBankSeconds}s in their time bank after ${hand.clock.timeBankEveryHands} played hands.`, player.id);
+    }
   }
 }
 
@@ -264,6 +304,7 @@ function settle(room: Room, fx: Effects, ctx: Context) {
   settleBounty(room, hand, fx, ctx);
   hand.street = 'complete';
   hand.actorId = null;
+  hand.baseDeadline = null;
   hand.deadline = null;
   hand.runoutVote = null;
   hand.completedAt = ctx.now;
@@ -271,6 +312,7 @@ function settle(room: Room, fx: Effects, ctx: Context) {
   hand.bountyAfter = Object.fromEntries(room.players.map(player => [player.id, player.bountyNet]));
   const winning = [...new Set(hand.results.flatMap(result => Object.keys(result.shares)))].map(id => findPlayer(room, id).name).join(' & ');
   event(fx, ctx, 'hand_finished', `${winning} won ${hand.awardedPot.toLocaleString('en-US')} chips${hand.showdown ? ' at showdown' : ' uncontested'}.`);
+  accrueTimeBanks(room, fx, ctx);
   applyApprovedFunding(room, fx, ctx);
   if (room.endAfterHand) finishSession(room, fx, ctx);
   else room.nextHandAt = room.settings.autoDeal && !room.paused ? ctx.now + 8000 : null;
@@ -290,6 +332,7 @@ function runOut(room: Room, count: RunoutCount, fx: Effects, ctx: Context) {
   hand.runoutCount = count;
   hand.runoutVote = null;
   hand.actorId = null;
+  hand.baseDeadline = null;
   hand.deadline = null;
   hand.runoutBoards = [];
   for (let run = 0; run < count; run++) {
@@ -326,6 +369,7 @@ function finishAllInBetting(room: Room, fx: Effects, ctx: Context) {
   if (maxRuns === 1) { runOut(room, 1, fx, ctx); return; }
   hand.runoutPrefix = hand.boards.map(board => [...board]);
   hand.actorId = null;
+  hand.baseDeadline = null;
   hand.deadline = null;
   const eligible = hand.players.filter(player => !player.folded).map(player => player.id);
   hand.runoutVote = { eligible, votes: {}, maxRuns, deadline: room.paused ? null : ctx.now + runoutChoiceMs };
@@ -393,8 +437,7 @@ function selectNextActor(room: Room, afterSeat: number, fx: Effects, ctx: Contex
   if (pending.length === 0) { advanceStreet(room, fx, ctx); return; }
   const seat = nextSeat(pending, afterSeat);
   hand.actorId = pending.find(player => player.seat === seat)!.id;
-  hand.turnStartedAt = ctx.now;
-  hand.deadline = room.paused ? null : ctx.now + room.settings.turnSeconds * 1000;
+  startTurnClock(room, ctx.now);
 }
 
 function deal(room: Room, fx: Effects, ctx: Context) {
@@ -422,12 +465,12 @@ function deal(room: Room, fx: Effects, ctx: Context) {
   if (deck.length !== 52 || new Set(deck).size !== 52 || deck.some(card => !/^[2-9TJQKA][cdhs]$/.test(card))) throw new Error('Invalid full deck.');
   const hand: Hand = {
     id: randomUUID(), number: room.handNumber, street: 'preflop', board: [], deck, burned: [], holeCards: {},
-    rules, boards: isDoubleBoard(rules) ? [[], []] : [[]],
+    rules, clock: turnClockSettings(room.settings), boards: isDoubleBoard(rules) ? [[], []] : [[]],
     runoutBoards: [], runoutPrefix: null, runoutCount: 1, runoutVote: null, preflopPotAdjustment: 0, bounty: null,
     players: eligible.map(player => ({ id: player.id, seat: player.seat, committed: 0, postflopCommitted: 0, streetBet: 0, folded: false, actedAtBet: null, lastAction: '' })),
     buttonSeat: button, smallBlindSeat: sb, bigBlindSeat: bb, currentBet: hasBlinds ? room.settings.bigBlind : 0,
     minRaise: room.settings.bigBlind, actorId: null, pot: 0, awardedPot: 0,
-    turnStartedAt: ctx.now, deadline: null, startedAt: ctx.now, completedAt: null,
+    turnStartedAt: ctx.now, baseDeadline: null, deadline: null, startedAt: ctx.now, completedAt: null,
     showdown: false, results: [], revealed: {}, balanceAfter: {}, bountyAfter: {},
   };
   room.hand = hand;
@@ -530,6 +573,7 @@ function act(room: Room, actorId: string, command: Extract<Command, { type: 'act
     text = `${player.name} raised to ${amount.toLocaleString('en-US')}${player.stack === 0 ? ' (all-in)' : capped ? ' (post-flop cap reached)' : ''}.`;
   }
   hp.actedAtBet = hand.currentBet;
+  consumeTimeBank(room, ctx.now);
   if (!ctx.system) player.timeoutCount = 0;
   event(fx, ctx, 'action', text, actorId);
   selectNextActor(room, hp.seat, fx, ctx);
@@ -617,6 +661,7 @@ function assertHandCards(hand: Hand) {
 
 export function assertRoom(room: Room) {
   if (room.schemaVersion !== ROOM_SCHEMA_VERSION) throw new Error('Room must be normalized before validation.');
+  validateClockSettings(room.settings);
   validateHandRules(room.nextHandRules);
   const seats = room.players.flatMap(player => player.seat === null ? [] : [player.seat]);
   if (new Set(seats).size !== seats.length || new Set(room.players.map(player => player.id)).size !== room.players.length) throw new Error('Duplicate player or seat.');
@@ -624,6 +669,8 @@ export function assertRoom(room: Room) {
     throw new Error('Invalid player emoji.');
   if (room.players.some(player => !integer(player.stack, 0, 1_000_000_000) || !integer(player.buyIns, 0, 1_000_000_000) || !integer(player.cashOuts, 0, 1_000_000_000))) throw new Error('Invalid account balance.');
   if (room.players.some(player => !Number.isSafeInteger(player.bountyNet))) throw new Error('Invalid signed bounty balance.');
+  if (room.players.some(player => !integer(player.timeBankMs, 0, Number.MAX_SAFE_INTEGER) ||
+      !integer(player.timeBankHandsPlayed, 0, 999))) throw new Error('Invalid time-bank balance or hand count.');
   if (room.players.reduce((sum, player) => sum + BigInt(player.bountyNet), 0n) !== 0n) throw new Error('Bounty balances are not zero-sum.');
   const issued = room.players.reduce((sum, player) => sum + player.buyIns - player.cashOuts, 0);
   const held = room.players.reduce((sum, player) => sum + player.stack, 0) + (room.hand?.pot ?? 0);
@@ -632,6 +679,15 @@ export function assertRoom(room: Room) {
   if (hand) {
     const cap = hand.rules.postflopCap ?? 0;
     validateHandRules(hand.rules, true);
+    validateClockSettings(hand.clock);
+    if (hand.actorId !== null && !room.paused) {
+      if (!Number.isSafeInteger(hand.turnStartedAt) || !Number.isSafeInteger(hand.baseDeadline) ||
+          !Number.isSafeInteger(hand.deadline) || hand.baseDeadline! < hand.turnStartedAt ||
+          hand.deadline! - hand.baseDeadline! !== findPlayer(room, hand.actorId).timeBankMs)
+        throw new Error('Invalid turn clock or time-bank deadline.');
+    } else if (hand.baseDeadline !== null || hand.deadline !== null) {
+      throw new Error('A paused or inactive turn cannot have a running clock.');
+    }
     if (new Set(hand.players.map(player => player.id)).size !== hand.players.length ||
         new Set(hand.players.map(player => player.seat)).size !== hand.players.length ||
         !integer(hand.pot, 0, sessionFundingLimit) || !integer(hand.awardedPot, 0, sessionFundingLimit) ||
@@ -784,29 +840,41 @@ export function transition(original: Room, actorId: string, command: Command, ct
     }
     case 'pause':
       requireHost(room, actorId);
+      if (room.paused === command.value) break;
+      // Recovery preserves the last saved bank instead of charging server downtime.
+      if (command.value && !ctx.system) consumeTimeBank(room, ctx.now);
       room.paused = command.value;
       if (activeHand(room)) {
         const hand = room.hand!;
         hand.turnStartedAt = ctx.now;
         if (hand.runoutVote) {
+          hand.baseDeadline = null;
           hand.deadline = null;
           hand.runoutVote.deadline = command.value ? null : ctx.now + runoutChoiceMs;
-        } else hand.deadline = command.value || !hand.actorId ? null : ctx.now + room.settings.turnSeconds * 1000;
+        } else startTurnClock(room, ctx.now);
       } else room.nextHandAt = !command.value && room.settings.autoDeal && room.hand ? ctx.now + 8000 : null;
       event(fx, ctx, 'pause', `Table ${command.value ? 'paused' : 'resumed'} by the host.`, actorId);
       break;
     case 'settings': {
       requireHost(room, actorId);
-      validateSettings({ ...room.settings, ...command, minBuyIn: command.minBuyIn === undefined ? room.settings.minBuyIn : command.minBuyIn });
+      const settings = {
+        ...room.settings, ...command,
+        minBuyIn: command.minBuyIn === undefined ? room.settings.minBuyIn : command.minBuyIn,
+        timeBankSeconds: command.timeBankSeconds === undefined ? room.settings.timeBankSeconds : command.timeBankSeconds,
+        timeBankEveryHands: command.timeBankEveryHands === undefined ? room.settings.timeBankEveryHands : command.timeBankEveryHands,
+      };
+      validateSettings(settings);
       const blinds = { smallBlind: command.smallBlind, bigBlind: command.bigBlind, ante: command.ante };
       if (activeHand(room)) room.pendingBlinds = blinds;
       else Object.assign(room.settings, blinds);
       room.settings.autoDeal = command.autoDeal;
       room.settings.turnSeconds = command.turnSeconds;
+      room.settings.timeBankSeconds = settings.timeBankSeconds;
+      room.settings.timeBankEveryHands = settings.timeBankEveryHands;
       room.settings.allowRebuys = command.allowRebuys;
       if (command.minBuyIn !== undefined) room.settings.minBuyIn = command.minBuyIn;
       room.nextHandAt = !activeHand(room) && room.hand && command.autoDeal && !room.paused ? ctx.now + 8000 : null;
-      event(fx, ctx, 'settings', `Table settings updated. Blinds ${command.smallBlind}/${command.bigBlind}, ante ${command.ante}${activeHand(room) ? ' from the next hand' : ''}.${command.minBuyIn === undefined ? '' : ` Minimum buy-in is now ${command.minBuyIn}; existing balances are unchanged.`}`, actorId);
+      event(fx, ctx, 'settings', `Table settings updated. Blinds ${command.smallBlind}/${command.bigBlind}, ante ${command.ante}; turn clock ${command.turnSeconds}s, time bank adds ${settings.timeBankSeconds}s every ${settings.timeBankEveryHands} played hands${activeHand(room) ? ' from the next hand' : ''}.${command.minBuyIn === undefined ? '' : ` Minimum buy-in is now ${command.minBuyIn}; existing balances are unchanged.`}`, actorId);
       break;
     }
     case 'add_bot': {
@@ -912,7 +980,7 @@ export function roomView(original: Room, userId: string, connected: Set<string>,
           : hand?.holeCards[player.id]?.map(card => hand.revealed[player.id]?.includes(card) ? card : null);
       const chipNet = player.stack + (activeHand(room) ? hp?.committed ?? 0 : 0) + player.cashOuts - player.buyIns;
       return {
-        ...player, connected: player.bot || connected.has(player.id), hand: hp,
+        ...player, timeBankMs: remainingTimeBankMs(room, player, now), connected: player.bot || connected.has(player.id), hand: hp,
         cards: visible ? [...visible] : hp ? Array.from({ length: isLegacyIndianHand(hand!) ? 1 : holeCardCount(hand!.rules) }, () => null) : [],
         chipNet, net: chipNet + player.bountyNet,
       };
