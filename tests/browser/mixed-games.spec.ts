@@ -597,6 +597,7 @@ test('double-board run tabs keep public prefixes and history identifies actual p
     hand.players = room.players.map(player => player.hand!);
     hand.street = 'complete';
     hand.showdown = true;
+    hand.revealed[room.youId] = room.players[0]!.cards.filter((card): card is string => card !== null);
     hand.completedAt = Date.now();
     hand.actorId = null;
     hand.deadline = null;
@@ -624,6 +625,14 @@ test('double-board run tabs keep public prefixes and history identifies actual p
   await expect(page.locator('.community .card-face')).toHaveCount(10);
   await expect(page.locator('.hero-seat .playing-card')).toHaveCount(4);
   await expect(page.locator('.blind-badge')).toHaveCount(0);
+  const results = page.getByRole('region', { name: 'Hand results', exact: true });
+  await expect(results.locator('.winning-board')).toHaveCount(6);
+  await expect(results.locator('.winning-cards .card-face')).toHaveCount(30);
+  await expect(results.locator('.winning-hole-card')).toHaveCount(12);
+  const lastBoard = results.getByRole('article', { name: 'Run 3, board 2 winners', exact: true });
+  await expect(lastBoard.locator('.winning-player')).toContainText('500 chips');
+  await expect(lastBoard.locator('.winning-pots')).toHaveText('Main pot + Side pot 2');
+  await expect(results.locator('[data-winning-animation]')).toHaveCount(0);
   const tabs = page.getByRole('tablist', { name: 'Board runs' });
   await tabs.getByRole('tab', { name: 'Run 1', exact: true }).focus();
   await page.keyboard.press('ArrowRight');
