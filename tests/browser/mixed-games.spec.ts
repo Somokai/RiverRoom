@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
-import { DEFAULT_SETTINGS, defaultHandRules, type Command, type GameVariant, type HandHistory, type HandView, type Identity, type LedgerRow, type RoomView } from '../../src/shared/model';
+import { DEFAULT_SETTINGS, defaultHandRules, turnClockSettings, type Command, type GameVariant, type HandHistory, type HandView, type Identity, type LedgerRow, type RoomView } from '../../src/shared/model';
 
 function handView(base: RoomView, game: GameVariant = 'holdem'): RoomView {
   const room = structuredClone(base);
@@ -16,13 +16,14 @@ function handView(base: RoomView, game: GameVariant = 'holdem'): RoomView {
   }));
   const boards = game === 'omaha_bomb' ? [['2h', '3c', '4s'], ['5d', '6h', '7c']] : [[]];
   const pot = participants.reduce((sum, player) => sum + player.committed, 0);
+  const now = Date.now();
   const hand: HandView = {
-    id: 'fixture-hand-1', number: 1, rules, boards, board: boards[0] ?? [],
+    id: 'fixture-hand-1', number: 1, rules, clock: turnClockSettings(room.settings), boards, board: boards[0] ?? [],
     runoutBoards: [], runoutPrefix: null, runoutCount: 1, runoutVote: null, preflopPotAdjustment: 0, bounty: null,
     street: game === 'omaha_bomb' ? 'flop' : 'preflop', players: participants, buttonSeat: 0,
     smallBlindSeat: anteOnly ? null : 0, bigBlindSeat: anteOnly ? null : 1,
     currentBet: anteOnly ? 0 : 100, minRaise: 100, actorId: room.youId, pot, awardedPot: 0,
-    turnStartedAt: Date.now(), deadline: Date.now() + 120000, startedAt: Date.now(), completedAt: null,
+    turnStartedAt: now, baseDeadline: now + 120000, deadline: now + 120000, startedAt: now, completedAt: null,
     showdown: false, results: [], revealed: {}, balanceAfter: {}, bountyAfter: {},
   };
   room.players = room.players.map((player, index) => ({

@@ -327,6 +327,21 @@ them outside the app. Bot-related amounts remain virtual.
 - Turn clocks: check when legal, otherwise fold. Two consecutive timeouts mark
   the player to sit out subsequent hands. Sitting out during a hand takes
   effect next hand; it does not waive the current decision.
+- Optional time banks in **House rules** (also available when creating a table):
+  set **Time bank added (seconds)** to X and **Add time bank every (hands)** to Y.
+  Each player starts with an empty bank and earns X seconds after every Y
+  completed hands they participate in, including folds, but not hands they sit
+  out. Awards accumulate without a cap; unused normal turn-clock seconds are
+  discarded, never banked. The normal clock runs first, then the seat shows a
+  **Bank** countdown and automatically spends banked time before timing out.
+  Unspent bank seconds carry across turns and hands; balances appear in the
+  Players panel and persist across reconnections and server restarts.
+  X accepts 0-3600 seconds and Y accepts 1-1000 hands. X defaults to 0 (no new
+  awards); setting it back to 0 retains existing balances and accrual progress.
+  Clock settings are frozen for each hand, so changes apply to the next deal.
+  Pausing stops bank consumption; resuming starts a fresh normal turn clock,
+  as before, with the remaining bank. Recovery pauses preserve the last saved
+  bank rather than charging server downtime. Runout-choice clocks do not use it.
 - Optional automatic next hands, pause/resume, host transfer, next-hand blind
   changes, funding approvals, rebuys, add-ons, and session closure.
 - Practice bots that receive only the same redacted view as a human player.

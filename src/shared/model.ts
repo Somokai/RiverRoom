@@ -89,6 +89,8 @@ export interface RoomSettings {
   currency: 'USD' | 'EUR' | 'GBP' | 'CAD';
   maxSeats: number;
   turnSeconds: number;
+  timeBankSeconds: number;
+  timeBankEveryHands: number;
   autoDeal: boolean;
   allowRebuys: boolean;
 }
@@ -96,9 +98,15 @@ export interface RoomSettings {
 export const DEFAULT_SETTINGS: RoomSettings = {
   smallBlind: 50, bigBlind: 100, ante: 0,
   minBuyIn: 500, maxBuyIn: 20000, chipValueCents: 1,
-  currency: 'USD', maxSeats: 9, turnSeconds: 45,
+  currency: 'USD', maxSeats: 9, turnSeconds: 45, timeBankSeconds: 0, timeBankEveryHands: 10,
   autoDeal: true, allowRebuys: true,
 };
+
+export type TurnClockSettings = Pick<RoomSettings, 'turnSeconds' | 'timeBankSeconds' | 'timeBankEveryHands'>;
+export function turnClockSettings(settings: TurnClockSettings): TurnClockSettings {
+  const { turnSeconds, timeBankSeconds, timeBankEveryHands } = settings;
+  return { turnSeconds, timeBankSeconds, timeBankEveryHands };
+}
 
 export interface Player {
   id: string;
@@ -113,6 +121,8 @@ export interface Player {
   bountyNet: number;
   sittingOut: boolean;
   timeoutCount: number;
+  timeBankMs: number;
+  timeBankHandsPlayed: number;
   bot: boolean;
   joinedAt: number;
 }
@@ -146,6 +156,7 @@ export interface Hand {
   street: Street;
   board: Card[];
   rules: HandRules;
+  clock: TurnClockSettings;
   boards: Card[][];
   runoutBoards: Card[][][];
   runoutPrefix: Card[][] | null;
@@ -166,6 +177,8 @@ export interface Hand {
   pot: number;
   awardedPot: number;
   turnStartedAt: number;
+  // The normal clock ends here; deadline also includes the acting player's time bank.
+  baseDeadline: number | null;
   deadline: number | null;
   startedAt: number;
   completedAt: number | null;
@@ -252,7 +265,7 @@ export type Command =
   | { type: 'cash_out' }
   | { type: 'sit_out'; value: boolean }
   | { type: 'pause'; value: boolean }
-  | { type: 'settings'; smallBlind: number; bigBlind: number; ante: number; autoDeal: boolean; turnSeconds: number; allowRebuys: boolean; minBuyIn?: number }
+  | { type: 'settings'; smallBlind: number; bigBlind: number; ante: number; autoDeal: boolean; turnSeconds: number; allowRebuys: boolean; minBuyIn?: number; timeBankSeconds?: number; timeBankEveryHands?: number }
   | { type: 'next_hand'; rules: HandRules }
   | { type: 'runouts'; handId: string; count: RunoutCount }
   | { type: 'add_bot'; name?: string }

@@ -62,6 +62,140 @@ beforeAll(async () => {
 afterAll(async () => { await server?.close(); await db?.close(); });
 
 describe('persistent multiplayer service', () => {
+  test('time-bank settings, awards, consumption, and timeouts are authoritative and retry-safe', async () => {
+    const host = await guest('Bank host');
+    const player = await guest('Bank guest');
+    let room = await create(host);
+    room = await enter(room, player);
+    const send = async (user: Guest, value: Command, key = randomUUID()) => {
+      const result = await command(room, user, value, key);
+      expect(result.response.status, result.text).toBe(200);
+      room = result.json.room as RoomView;
+    };
+    const actor = () => [host, player].find(user => user.user.id === room.hand!.actorId)!;
+    await send(player, { type: 'fund', amount: 10000 });
+    await send(host, { type: 'approve', requestId: room.requests.at(-1)!.id, approve: true });
+    const settings: Extract<Command, { type: 'settings' }> = {
+      type: 'settings', smallBlind: 50, bigBlind: 100, ante: 0, autoDeal: false,
+      turnSeconds: 15, allowRebuys: true, timeBankSeconds: 12, timeBankEveryHands: 2,
+    };
+    expect((await command(room, player, settings)).response.status).toBe(403);
+    expect((await command(room, host, { ...settings, timeBankEveryHands: 0 })).response.status).toBe(400);
+    await send(host, settings);
+    const { timeBankSeconds: _seconds, timeBankEveryHands: _hands, ...legacySettings } = settings;
+    await send(host, legacySettings);
+    expect(room.settings).toMatchObject({ timeBankSeconds: 12, timeBankEveryHands: 2 });
+    for (let hand = 0; hand < 2; hand++) {
+      await send(host, { type: 'deal' });
+      const before = room;
+      const folding = actor();
+      const key = randomUUID();
+      await send(folding, { type: 'act', action: 'fold' }, key);
+      const ledger = await store.ledger(room.id);
+      const retry = await command(before, folding, { type: 'act', action: 'fold' }, key);
+      expect(retry.json.duplicate).toBe(true);
+      expect(retry.json.room.version).toBe(room.version);
+      expect(await store.ledger(room.id)).toEqual(ledger);
+      expect(room.players.every(member => member.timeBankMs === (hand === 1 ? 12000 : 0))).toBe(true);
+    }
+    const audit = await store.audit(room.id);
+    expect(audit.entries.flatMap(entry => entry.events).filter(event => event.kind === 'time_bank')).toHaveLength(2);
+    await send(host, { type: 'deal' });
+    const thinking = actor();
+    const normalDeadline = room.hand!.baseDeadline!;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(normalDeadline + 1250);
+    try {
+      const live = await get(room.id, thinking);
+      expect(live.players.find(member => member.id === thinking.user.id)!.timeBankMs).toBe(10750);
+      expect(live.legal.canAct).toBe(true);
+      expect(live.hand).not.toHaveProperty('deck');
+      expect(live.hand).not.toHaveProperty('holeCards');
+      expect((await store.getRoom(room.id)).players.find(member => member.id === thinking.user.id)!.timeBankMs).toBe(12000);
+      const before = room;
+      const key = randomUUID();
+      await send(thinking, { type: 'act', action: 'call' }, key);
+      expect(room.players.find(member => member.id === thinking.user.id)!.timeBankMs).toBe(10750);
+      clock.mockReturnValue(normalDeadline + 3250);
+      const retry = await command(before, thinking, { type: 'act', action: 'call' }, key);
+      expect(retry.json.duplicate).toBe(true);
+      expect(retry.json.room.version).toBe(room.version);
+      expect(retry.json.room.players.find((member: { id: string }) => member.id === thinking.user.id).timeBankMs).toBe(10750);
+      expect((await command(before, thinking, { type: 'act', action: 'fold' }, key)).response.status).toBe(409);
+      expect((await command(before, actor(), { type: 'act', action: 'check' })).response.status).toBe(409);
+      const waiting = actor();
+      clock.mockReturnValue(room.hand!.baseDeadline!);
+      expect(await store.timeout(room.id, room.version)).toBeNull();
+      clock.mockReturnValue(room.hand!.deadline! - 1);
+      expect(await store.timeout(room.id, room.version)).toBeNull();
+      clock.mockReturnValue(room.hand!.deadline!);
+      const timed = (await store.timeout(room.id, room.version))!;
+      expect(timed.players.find(member => member.id === waiting.user.id)).toMatchObject({ timeBankMs: 0, timeoutCount: 1 });
+      expect(timed.hand!.street).toBe('flop');
+      expect(await store.timeout(room.id, room.version)).toBeNull();
+      const bets = (await store.ledger(room.id)).entries.filter(entry => entry.handId === room.hand!.id && entry.kind === 'bet');
+      expect(bets).toHaveLength(1);
+      expect(bets[0]!.playerId).toBe(thinking.user.id);
+      expect((await store.verifyAudit(room.id)).valid).toBe(true);
+    } finally { clock.mockRestore(); }
+  });
+
+  test('bank balances, partial consumption, accrual progress, and frozen clocks survive a database reopen', async () => {
+    const path = await mkdtemp(join(tmpdir(), 'river-room-time-bank-test-'));
+    let local: Database | null = null;
+    let now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      local = await openDatabase({ directory: join(path, 'postgres') });
+      let persisted = new Store(local);
+      const host = (await persisted.createIdentity('Persistent bank')).user;
+      let room = await persisted.create(host, {
+        name: 'Bank persistence', settings: { ...DEFAULT_SETTINGS, autoDeal: false, turnSeconds: 15, timeBankSeconds: 11, timeBankEveryHands: 2 },
+        buyIn: 10000, commandId: randomUUID(),
+      });
+      const send = async (actor: string, value: Command) => {
+        now++;
+        room = (await persisted.execute(room.id, actor, randomUUID(), value, room.version)).room;
+      };
+      await send(host.id, { type: 'add_bot' });
+      for (let hand = 0; hand < 3; hand++) {
+        await send(host.id, { type: 'deal' });
+        await send(room.hand!.actorId!, { type: 'act', action: 'fold' });
+      }
+      expect(room.players.every(member => member.timeBankMs === 11000 && member.timeBankHandsPlayed === 1)).toBe(true);
+      await send(host.id, { type: 'deal' });
+      const thinking = room.hand!.actorId!;
+      now = room.hand!.baseDeadline! + 1749;
+      await send(thinking, { type: 'act', action: 'call' });
+      expect(room.players.find(member => member.id === thinking)!.timeBankMs).toBe(9250);
+      await send(host.id, {
+        type: 'settings', smallBlind: 50, bigBlind: 100, ante: 0, autoDeal: false, turnSeconds: 60,
+        allowRebuys: true, timeBankSeconds: 25, timeBankEveryHands: 1,
+      });
+      const balances = room.players.map(member => ({ id: member.id, bank: member.timeBankMs, hands: member.timeBankHandsPlayed }));
+      const ledger = await persisted.ledger(room.id);
+      await local.close(); local = null;
+      local = await openDatabase({ directory: join(path, 'postgres') });
+      persisted = new Store(local);
+      now += 86400000;
+      await persisted.pauseAfterRestart();
+      room = await persisted.getRoom(room.id);
+      expect(room.paused).toBe(true);
+      expect(room.hand).toMatchObject({ baseDeadline: null, deadline: null, clock: { turnSeconds: 15, timeBankSeconds: 11, timeBankEveryHands: 2 } });
+      expect(room.settings).toMatchObject({ turnSeconds: 60, timeBankSeconds: 25, timeBankEveryHands: 1 });
+      expect(room.players.map(member => ({ id: member.id, bank: member.timeBankMs, hands: member.timeBankHandsPlayed }))).toEqual(balances);
+      expect(await persisted.ledger(room.id)).toEqual(ledger);
+      await send(host.id, { type: 'pause', value: false });
+      const waiting = room.players.find(member => member.id === room.hand!.actorId)!;
+      expect(room.hand!.baseDeadline).toBe(now + 15000);
+      expect(room.hand!.deadline).toBe(now + 15000 + waiting.timeBankMs);
+      expect((await persisted.verifyAudit(room.id)).valid).toBe(true);
+    } finally {
+      clock.mockRestore();
+      await local?.close();
+      await rm(path, { recursive: true, force: true });
+    }
+  });
+
   test('post-flop caps are versioned and retry-safe, preserve unused stacks, and allow capped runouts', async () => {
     const host = await guest('Cap host');
     const player = await guest('Cap guest');
