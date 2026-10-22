@@ -58,10 +58,12 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
   }, []);
   useEffect(() => acceptRoom(initialRoom), [initialRoom, acceptRoom]);
   const refresh = useCallback(async () => {
-    try { acceptRoom((await getRoom(initialRoom.id)).room); }
+    try { acceptRoom((await getRoom(initialRoom.id, AbortSignal.timeout(5000))).room); }
     catch (reason) {
       if (reason instanceof ApiError && reason.status === 401) expired.current();
-      else setError(reason instanceof Error ? reason.message : 'Unable to refresh your table.');
+      else setError(reason instanceof DOMException && reason.name === 'TimeoutError'
+        ? 'Refreshing the table timed out. Please try again.'
+        : reason instanceof Error ? reason.message : 'Unable to refresh your table.');
     }
   }, [initialRoom.id, acceptRoom]);
   useEffect(() => {
