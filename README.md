@@ -377,7 +377,16 @@ them outside the app. Bot-related amounts remain virtual.
   original immutable hand summary; neither hand records nor audit rows are
   rewritten. Existing room snapshots and full-card reveal lists keep their
   stored shape.
-- Full transfer ledger, hand history, full action journal, CSV and JSON downloads.
+- Session ledger opens with each player's total **Bought in**, **Cashed out**,
+  and **Net gain / loss** in chips. Buy-ins include funded rebuys and add-ons,
+  not pending or queued requests.
+  During play, cash-outs show only chips already removed; net results include
+  current stacks and chips committed to an unfinished hand. Final results use
+  the recorded cash-outs when the session closes. Bot rows are marked virtual.
+  Bounty obligations are shown separately, never added to chip cash-outs or net
+  results. Expand **Detailed transfers, exports & verification** for the full
+  immutable transfer ledger, older entries, integrity checks, and CSV/JSON
+  downloads. Hand history and the full action journal remain available.
 - Responsive desktop/mobile table, reduced-motion support, native accessible
   dialogs, one large suit symbol per card, optional turn sounds, and no
   externally hosted images or fonts.

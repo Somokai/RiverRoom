@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, RefreshCw, ShieldCheck, LoaderCircle, ArrowDown, Bot } from 'lucide-react';
+import { Download, RefreshCw, ShieldCheck, LoaderCircle, ArrowDown } from 'lucide-react';
 import { api } from './api';
 import { BountyNotice, CommunityBoards, Modal, PlayingCard, bountyLabel, ruleSummary, signedChips } from './ui';
 import { chips, handGameLabel, isLegacyIndianHand, money, type AuditRow, type HandHistory, type LedgerRow, type RoomView } from '../shared/model';
@@ -34,7 +34,7 @@ export function Records({ room, tab, close }: { room: RoomView; tab: 'ledger' | 
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load records.'); }
     finally { setBusy(false); }
   }
-  useEffect(() => { void load(); }, [tab, room.id]);
+  useEffect(() => { if (tab !== 'ledger') void load(); }, [tab, room.id]);
   async function verify() {
     setBusy(true); setError('');
     try {
@@ -44,19 +44,43 @@ export function Records({ room, tab, close }: { room: RoomView; tab: 'ledger' | 
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to verify history.'); }
     finally { setBusy(false); }
   }
-  return <Modal wide title={tab === 'ledger' ? 'Every chip has a story.' : tab === 'hands' ? 'The hands that happened.' : 'The complete table journal.'}
-    subtitle={`${room.name} / Session ${room.code} / ${tab === 'ledger' ? 'Chip transfers and separate off-table bounty obligations, newest first.' : tab === 'hands' ? 'Completed hands, every board and run, and publicly revealed cards.' : 'Append-only actions with a linked integrity hash.'}`} close={close}>
-    <div className="record-tools"><button className="button button-small button-outline" disabled={busy} onClick={() => void load()}><RefreshCw size={15} /> Refresh</button>
-      <a className="button button-small button-outline" href={`/api/rooms/${room.id}/export.csv`}><Download size={15} /> Ledger CSV</a>
-      <a className="button button-small button-outline" href={`/api/rooms/${room.id}/export.json`}><Download size={15} /> Audit JSON</a>
-      <button className="button button-small button-outline" disabled={busy} onClick={() => void verify()}><ShieldCheck size={15} /> Verify history</button></div>
+  const DetailContainer = tab === 'ledger' ? 'details' : 'div';
+  const recordActions = <>
+    <button className="button button-small button-outline" disabled={busy} onClick={() => void load()}><RefreshCw size={15} /> Refresh</button>
+    <a className="button button-small button-outline" href={`/api/rooms/${room.id}/export.csv`}><Download size={15} /> Ledger CSV</a>
+    <a className="button button-small button-outline" href={`/api/rooms/${room.id}/export.json`}><Download size={15} /> Audit JSON</a>
+    <button className="button button-small button-outline" disabled={busy} onClick={() => void verify()}><ShieldCheck size={15} /> Verify history</button>
+  </>;
+  return <Modal wide title={tab === 'ledger' ? 'Session results' : tab === 'hands' ? 'The hands that happened.' : 'The complete table journal.'}
+    subtitle={`${room.name} / Session ${room.code} / ${tab === 'ledger' ? 'What everyone bought in for, cashed out, and won or lost.' : tab === 'hands' ? 'Completed hands, every board and run, and publicly revealed cards.' : 'Append-only actions with a linked integrity hash.'}`} close={close}>
+    {tab !== 'ledger' && <div className="record-tools">{recordActions}</div>}
+    {tab === 'ledger' && <section className="session-results" aria-label="Player session results">
+      <p className="session-results-note">All amounts are in chips. Bought in includes funded rebuys and add-ons; pending or queued requests are not included.</p>
+      <table className="session-results-table"><caption className="session-results-caption">
+        {room.status === 'closed' ? 'Final session results' : 'Session results so far'}
+      </caption><thead><tr><th scope="col">Player</th><th scope="col">Bought in</th><th scope="col">Cashed out</th><th scope="col">Net gain / loss</th></tr></thead>
+        <tbody>{room.players.map(player => <tr key={player.id}><th scope="row">{player.name}{player.bot && <small>Virtual practice chips</small>}</th>
+          <td data-label="Bought in">{chips(player.buyIns)}</td>
+          <td data-label="Cashed out">{chips(player.cashOuts)}</td>
+          <td data-label="Net gain / loss" className={player.chipNet >= 0 ? 'positive' : 'negative'}>{signedChips(player.chipNet)}</td>
+        </tr>)}</tbody></table>
+      {room.status === 'open' && <p className="session-results-note">Cashed out means chips already taken off the table, not chips still in play.
+        {' '}Net gain / loss includes current stacks and chips committed to an unfinished hand, so it is not final until play finishes and everyone cashes out.</p>}
+      {room.players.some(player => player.bountyNet !== 0) && <aside className="session-bounties" aria-label="Separate bounty obligations">
+        <h3>Separate bounty obligations</h3>
+        <p>These amounts are owed off-table, not paid. They are not included in the chip cash-outs or net gains/losses above.</p>
+        <dl>{room.players.filter(player => player.bountyNet !== 0).map(player => <div key={player.id}><dt>{player.name}{player.bot && ' (virtual practice)'}</dt>
+          <dd>{bountyLabel(player.bountyNet)}: {chips(Math.abs(player.bountyNet))} chips equivalent</dd></div>)}</dl>
+      </aside>}
+    </section>}
+    <DetailContainer className={tab === 'ledger' ? 'ledger-details' : undefined} onToggle={event => {
+      if (tab === 'ledger' && event.currentTarget instanceof HTMLDetailsElement && event.currentTarget.open) void load();
+    }}>
+    {tab === 'ledger' && <><summary>Detailed transfers, exports &amp; verification</summary>
+      <p className="record-bounty-note">The full chip-transfer ledger and separate off-table bounty obligations are shown below, newest first. Bounty entries do not fund a stack, increase a cash-out, or record a payment.</p>
+      <div className="record-tools">{recordActions}</div></>}
     {integrity && <p className="form-note">{integrity}</p>}
     {error && <div className="error-banner" role="alert">{error}</div>}
-    {tab === 'ledger' && <><div className="ledger-summary">{room.players.map(player => <div key={player.id}><span>{player.name}{player.bot && <Bot size={12} />}</span>
-      <strong className={player.net >= 0 ? 'positive' : 'negative'}>{signedChips(player.net)}<small>Total P/L including bounty</small></strong>
-      <small>Chip P/L: {signedChips(player.chipNet)}</small><small>{bountyLabel(player.bountyNet)}: {chips(Math.abs(player.bountyNet))} chips equivalent</small>
-      <small>{chips(player.buyIns)} in / {chips(player.cashOuts)} out / {chips(player.stack)} in play</small></div>)}</div>
-      <p className="record-bounty-note">Bounty entries record amounts owed between players, separately from the chip ledger. They do not fund a stack, increase a cash-out, or record a payment.</p></>}
     <div className="record-scroll">
       {tab === 'ledger' && <table className="data-table"><thead><tr><th>Time</th><th>Player / entry</th><th>Transfer / obligation</th><th className="number-cell">Chips / equivalent</th><th className="number-cell">Recorded value</th></tr></thead>
         <tbody>{ledger.map(entry => <tr key={entry.id}><td className="nowrap">{new Date(entry.at).toLocaleTimeString()}<small>{new Date(entry.at).toLocaleDateString()}</small></td>
@@ -87,5 +111,6 @@ export function Records({ room, tab, close }: { room: RoomView; tab: 'ledger' | 
     </div>
     <div className="record-footer"><span className="muted">Bookkeeping only, not payments. Bounties are separate off-table obligations. Bot balances are virtual.</span>
       {busy ? <LoaderCircle className="spin" size={20} /> : cursor && <button className="button button-small button-outline" onClick={() => void load(cursor)}><ArrowDown size={15} /> Older entries</button>}</div>
+    </DetailContainer>
   </Modal>;
 }

@@ -749,6 +749,11 @@ test('bounty receivables stay outside stacks and cash-outs and decode both ledge
   await expect(page.getByRole('dialog')).toContainText('not included in your cash-out');
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await page.getByRole('button', { name: /Session ledger/ }).click();
+  const results = page.getByRole('table', { name: 'Session results so far', exact: true });
+  await expect(results.getByRole('row').filter({ hasText: 'Mixed host' })).toContainText('-200');
+  await expect(results).not.toContainText('-150');
+  await expect(page.getByRole('complementary', { name: 'Separate bounty obligations' })).toContainText('Bounty receivable: 50 chips equivalent');
+  await page.getByText('Detailed transfers, exports & verification', { exact: true }).click();
   await expect(page.locator('.transfer-cell')).toContainText('Riley · bounty balance');
   await expect(page.locator('.transfer-cell')).toContainText('Mixed host · bounty balance');
   await expect(page.locator('.transfer-cell')).toContainText('no chips or payment moved');

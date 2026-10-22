@@ -387,7 +387,7 @@ export function Game({ initialRoom, user, onHome, onSessionExpired }: {
         </section>
         <section className="session-tools"><span className="eyebrow">THE PAPER TRAIL</span>
           <button aria-label="My stats" onClick={() => setModal('stats')}><BarChart3 size={17} /><span>My stats<small>Advanced stats, visible only to you</small></span><LockKeyhole size={16} /></button>
-          <button onClick={() => setModal('ledger')}><ReceiptText size={17} /><span>Session ledger<small>Chip transfers & off-table bounties</small></span><ArrowUpRight size={16} /></button>
+          <button onClick={() => setModal('ledger')}><ReceiptText size={17} /><span>Session ledger<small>Buy-ins, cash-outs &amp; net results</small></span><ArrowUpRight size={16} /></button>
           <button onClick={() => setModal('hands')}><History size={17} /><span>Hand history<small>Every completed hand</small></span><ArrowUpRight size={16} /></button>
           <button onClick={() => setModal('audit')}><ShieldCheck size={17} /><span>Full audit journal<small>Hash-linked, exportable records</small></span><ArrowUpRight size={16} /></button></section>
         <div className="sidebar-note">A home game, not a payment service.<br />Settle recorded balances outside the app.</div>

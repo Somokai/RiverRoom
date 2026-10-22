@@ -58,6 +58,13 @@ for (const seats of [2, 3]) {
     expect(after.players.find(player => player.id === bot.id)).toMatchObject({ buyIns: 1100, rebuyCount: 0, addOnCount: 1 });
     expect(after.players.find(player => player.id === after.youId)).toMatchObject({ stack: 1000, buyIns: 1000, addOnCount: 0 });
     await page.getByRole('button', { name: /Session ledger/ }).click();
+    const results = page.getByRole('table', { name: 'Session results so far', exact: true });
+    const botResult = results.getByRole('row').filter({ hasText: bot.name });
+    await expect(botResult).toContainText('Virtual practice chips');
+    await expect(botResult.getByRole('cell')).toHaveText(['1,100', '0', '+0']);
+    await expect(results.getByRole('row').filter({ hasText: after.players.find(player => player.id === after.youId)!.name }).getByRole('cell'))
+      .toHaveText(['1,000', '0', '+0']);
+    await page.getByText('Detailed transfers, exports & verification', { exact: true }).click();
     await expect(page.locator('.data-table tbody tr').filter({ hasText: `${bot.name}: virtual practice add on` })).toHaveCount(1);
     await page.getByRole('button', { name: 'Verify history' }).click();
     await expect(page.getByText(/Hash chain verified:/)).toBeVisible();

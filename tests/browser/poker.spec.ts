@@ -426,6 +426,7 @@ test('two independent players can play, reconnect, rebuy, cash out, and reconcil
     expect(final.players.every(player => player.stack === 0)).toBe(true);
     expect(final.players.reduce((sum, player) => sum + player.cashOuts, 0)).toBe(final.players.reduce((sum, player) => sum + player.buyIns, 0));
     await page.getByRole('button', { name: 'View final ledger' }).click();
+    await page.getByText('Detailed transfers, exports & verification', { exact: true }).click();
     await expect(page.locator('.data-table tbody tr')).not.toHaveCount(0);
     await page.getByRole('button', { name: 'Verify history' }).click();
     await expect(page.getByText(/Hash chain verified:/)).toBeVisible();

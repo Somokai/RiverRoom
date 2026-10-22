@@ -91,6 +91,26 @@ button:disabled, .profile-emoji-button[aria-disabled="true"] { opacity: .6; }
 .table-footer > div { flex-wrap: wrap; }
 .motion-preference select { max-width: none; }
 
+.session-results-table { width: 100%; border-collapse: collapse; font-size: var(--text-body); text-align: right; font-variant-numeric: tabular-nums; }
+.session-results-caption { text-align: left; color: var(--gold); font-size: 1.125rem; padding: 0 0 12px; }
+.session-results-table th, .session-results-table td { padding: 14px 10px; border-bottom: 1px solid var(--line); }
+.session-results-table thead th { color: var(--muted); font-weight: 500; }
+.session-results-table th:first-child { text-align: left; overflow-wrap: anywhere; }
+.session-results-table tbody th { font-weight: 500; }
+.session-results-table tbody td { white-space: nowrap; }
+.session-results-table small { display: block; color: var(--muted); font-size: var(--text-caption); margin-top: 6px; font-weight: 400; }
+.session-results-note, .session-bounties p { color: var(--muted); font-size: var(--text-body); line-height: 1.7; }
+.session-results-note { margin: 16px 0; }
+.session-bounties { padding: 16px; border: 1px solid var(--line); border-radius: 8px; margin: 20px 0; }
+.session-bounties h3 { font-size: var(--text-body); color: var(--gold); }
+.session-bounties dl { margin: 0; font-size: var(--text-body); }
+.session-bounties dl > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 8px 0; }
+.session-bounties dt, .session-bounties dd { margin: 0; overflow-wrap: anywhere; }
+.ledger-details { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 16px; }
+.ledger-details > summary { cursor: pointer; color: var(--gold); font-size: var(--text-body); padding: 8px 0; }
+.ledger-details > summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
+.ledger-details[open] > summary { margin-bottom: 12px; }
+
 .seat-name, .hero-seat .seat-name { font-size: .75rem; line-height: 1.2; }
 .seat-name small, .seat-action, .seat-bet, .seat .seat-bet,
 .position-badge, .dealer-badge, .blind-badge, .empty-seat small {
@@ -118,6 +138,14 @@ button:disabled, .profile-emoji-button[aria-disabled="true"] { opacity: .6; }
   .table-stage.table-double-board.table-crowded { min-height: 720px; }
 }
 @media (max-width: 600px) {
+  .session-results-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .session-results-table, .session-results-table tbody { display: block; }
+  .session-results-table tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 8px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+  .session-results-table tbody th { grid-column: 1 / -1; }
+  .session-results-table th, .session-results-table td { padding: 0; border: 0; text-align: left; }
+  .session-results-table tbody td { white-space: normal; overflow-wrap: anywhere; }
+  .session-results-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--text-caption); margin-bottom: 8px; }
+  .session-results-caption { display: block; }
   .game-main { padding-top: 8px; }
   .table-title-row { margin-bottom: 10px; }
   .table-title-row h1 { margin-top: 6px; }
