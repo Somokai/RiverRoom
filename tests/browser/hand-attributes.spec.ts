@@ -110,7 +110,9 @@ test('independent attributes combine in a real multiplayer hand and only future 
     }
     await expect(page.locator('.table-stage')).toHaveAttribute('data-street', 'complete');
     await expect(page.locator('.pot-display strong')).toBeVisible();
-    await expect(page.locator('.hand-outcome')).toHaveText('');
+    const winnerNames = room.players.filter(player => room.hand!.results.some(result => result.winners.includes(player.id)))
+      .map(player => player.name).join(' & ');
+    await expect(page.locator('.hand-outcome')).toHaveText(`${winnerNames} won`);
     await expect(page.locator('.hand-outcome')).toHaveAttribute('aria-label', /^Hand won by /);
     await page.getByRole('button', { name: /^Hand history/ }).click();
     await expect(page.locator('.hand-history')).toContainText('Double-board Indian pot-limit Omaha bomb pot');
