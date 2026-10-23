@@ -629,6 +629,35 @@ test('emoji selection closes before saving finishes and failures preserve the se
   expect(errors).toEqual([]);
 });
 
+test('an unresponsive conflict refresh releases emoji saving and allows a fresh selection', async ({ page }) => {
+  const room = await createTable(page, 'Bounded emoji recovery', 2);
+  const trigger = page.getByRole('button', { name: 'Choose table emoji', exact: true });
+  const roomPath = `**/api/rooms/${room.id}`;
+  const commandPath = `**/api/rooms/${room.id}/commands`;
+  await page.route(roomPath, () => {});
+  await page.route(commandPath, route => route.fulfill({ status: 409, json: { error: 'The table changed.' } }));
+  try {
+    await trigger.click();
+    await page.getByRole('searchbox', { name: 'Search emojis' }).fill('shark');
+    const refresh = page.waitForRequest(request => request.url().endsWith(`/api/rooms/${room.id}`));
+    await page.getByRole('button', { name: 'Choose Shark', exact: true }).click();
+    await refresh;
+    await expect(page.locator('.toast')).toHaveText('Saving emoji...');
+    await expect(trigger).toBeDisabled();
+    await expect(page.getByRole('alert')).toContainText('Refreshing the table timed out.', { timeout: 10000 });
+    await expect(trigger).toBeEnabled();
+    await expect(page.locator('.toast')).toHaveCount(0);
+    expect((await getRoom(page, room.id)).players.find(player => player.id === room.youId)!.emoji).toBeNull();
+  } finally {
+    await page.unroute(roomPath);
+    await page.unroute(commandPath);
+  }
+  await trigger.click();
+  await page.getByRole('searchbox', { name: 'Search emojis' }).fill('shark');
+  await page.getByRole('button', { name: 'Choose Shark', exact: true }).click();
+  await expect(page.locator('.hero-seat').getByRole('img', { name: 'Shark', exact: true })).toBeVisible();
+});
+
 test('emoji search stays cached during live updates and offscreen choices keep their space and keyboard support', async ({ page }) => {
   await page.addInitScript(() => {
     const counters = { searchBuilds: 0 };

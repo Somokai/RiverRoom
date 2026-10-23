@@ -17,7 +17,7 @@ export async function api<T>(path: string, body?: unknown, signal?: AbortSignal)
       ? result.error : `Request failed (${response.status}).`, response.status);
   return result as T;
 }
-export const getRoom = (id: string) => api<{ room: RoomView }>(`/rooms/${encodeURIComponent(id)}`);
+export const getRoom = (id: string, signal?: AbortSignal) => api<{ room: RoomView }>(`/rooms/${encodeURIComponent(id)}`, undefined, signal);
 export async function repeatable<T>(path: string, body: object): Promise<T> {
   try { return await api<T>(path, body); }
   catch (error) {
